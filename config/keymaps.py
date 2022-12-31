@@ -137,6 +137,7 @@ default_rf_keymaps = {
     'unpin all': ['SHIFT+ALT+P'],
 
     # shortcuts to tools
+    'autofill tool': ['CTRL+A'],
     'contours tool': ['ONE', 'CTRL+ALT+C'],
     'polystrips tool': ['TWO', 'CTRL+ALT+P'],
     'strokes tool': ['THREE', 'CTRL+ALT+B'],

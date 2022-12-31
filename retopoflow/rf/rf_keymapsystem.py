@@ -361,6 +361,7 @@ keymap_details = [
         ('unpin all', 'Unpin all geometry'),
     ]),
     ('Switching Between Tools', [
+        ('autofill tool', 'Switch to Autofill'),
         ('contours tool', 'Switch to Contours'),
         ('polystrips tool', 'Switch to PolyStrips'),
         ('strokes tool', 'Switch to Strokes'),
