@@ -27,6 +27,7 @@ from ...addon_common.common.debug  import dprint
 from ...addon_common.common.maths  import Point,Point2D,Vec2D,Vec, Normal, clamp
 from ...addon_common.common.bezier import CubicBezierSpline, CubicBezier
 from ...addon_common.common.utils  import iter_pairs
+import collections
 
 class Side:
     def __init__(self, edges):
@@ -43,195 +44,59 @@ class Side:
             if edge.verts[0] == vert:
                 return i
         return -1
-    
-    def contains(self, vert):
-        '''
-        check if side contains vert. EXCLUDES THE SECOND VERT OF THE FINAL EDGE!
-        '''
-        return self.index(vert) >= 0
-
-    def contains_full(self, vert):
-        '''
-        check if side contains vert. INCLUDES THE SECOND VERT OF THE FINAL EDGE!
-        '''
-        return self.index(vert) >= 0 or self.edges[-1].verts[1] == vert
 
 class AutofillPatch:
-    def __init__(self):
-        self.sides = []
-        self.closed = False
-
-    def count_shared_endpoints(self, endpoint):
-        count = 0
-        for side in self.sides:
-            start, end = side.get_endpoints()
-            if start == endpoint: # seperate these two cases to account for a patch being a single side that is a circle.
-                count += 1
-            if end == endpoint:
-                count += 1
-        return count
-
-    def compute_closed(self):
-        for side in self.sides:
-            start, end = side.get_endpoints()
-            if self.count_shared_endpoints(start) != 2 or self.count_shared_endpoints(end) != 2:
-                return False
-        return True
-
-    def get_open_endpoints(self):
-        '''
-        return the two open endpoints of the patch
-        '''
-        endpoints = []
-        for side in self.sides:
-            start, end = side.get_endpoints() # check start and end because there will inherently be no duplicates anyway
-            if self.count_shared_endpoints(start) == 1:
-                endpoints.append(start)
-            if self.count_shared_endpoints(end) == 1:
-                endpoints.append(end)
-        assert len(endpoints) == 2, 'patch has more than 2 open endpoints'
-        return endpoints
-
-    def can_add_side(self, side):
-        '''
-        check if side can be added to patch
-        '''
-        if self.closed:
-            return False
-        if not self.sides:
-            return True
-        start, end = side.get_endpoints()
-        start_count, end_count = self.count_shared_endpoints(start), self.count_shared_endpoints(end)
-        print(start_count, end_count)
-        if start_count >= 2 or end_count >= 2:
-            return False
-        return start_count == 1 or end_count == 1
-
-    def add_side(self, side):
-        '''
-        add side to patch
-        '''
-        assert self.can_add_side(side), 'cannot add side to patch'
-        self.sides.append(side)
-        if self.compute_closed():
-            self.closed = True
-
-    def is_split_by(self, side):
-        '''
-        check if side splits this patch in half
-        '''
-        if not self.closed:
-            return False
-        start, end = side.get_endpoints()
-        return any(s.contains(start) for s in self.sides) and any(s.contains(end) for s in self.sides)
-
-    def split(self, side):
-        '''
-        split this patch in half; returns the two new patches
-        '''
-        assert self.is_split_by(side), 'side does not split patch'
-
-        def get_sides(vert):
-            side_index = self.index(vert)
-            assert side_index >= 0, 'could not find side containing start'
-            edge_index = self.sides[side_index].index(vert)
-            if edge_index == 0:
-                # case 3a: split from start of side
-                side1 = self.sides[side_index]
-                side2 = self.sides[(side_index - 1) % len(self.sides)]
-                return side1, side2
-            else:
-                # case 3b: split from middle of side
-                side1 = Side(self.sides[side_index].edges[edge_index:])
-                side2 = Side(self.sides[side_index].edges[:edge_index])
-                return side1, side2
-            # case 3c: split from end of side (not possible because of how index works)
-        
-        def create_patch_half(start_side, end_side):
-            new_patch = AutofillPatch()
-            new_patch.add_side(side)
-            if new_patch.can_add_side(start_side):
-                new_patch.add_side(start_side)
-            else:
-                return None
-            if new_patch.can_add_side(end_side):
-                new_patch.add_side(end_side)
-            else:
-                return None
-
-            while not new_patch.closed:
-                for s in self.sides:
-                    if not s.contains_full(start) and not s.contains_full(end) and new_patch.can_add_side(s): # can't use the sides that cross the split
-                        new_patch.add_side(s)
-                        break
-                else:
-                    return None
-            return new_patch
-
-        start, end = side.get_endpoints()
-        start_side1, start_side2 = get_sides(start)
-        end_side1, end_side2 = get_sides(end)
-        p1, p2 = create_patch_half(start_side1, end_side1), create_patch_half(start_side2, end_side2)
-        if p1 and p2:
-            return p1, p2
-        return create_patch_half(start_side1, end_side2), create_patch_half(start_side2, end_side1)
-
-    def index(self, vert):
-        '''
-        return index of the side that contains the vert else -1.
-        if the vert is shared by two sides, return the index of the side that STARTS with the vert
-        '''
-        for i in range(len(self.sides)):
-            if self.sides[i].contains(vert):
-                return i
-        return -1
+    def __init__(self, sides):
+        self.sides = sides
 
 class AutofillPatches:
     def __init__(self):
+        self.sides = []
         self.patches = []
 
     def add_side(self, side):
+        self.sides.append(side)
+        self.add_intersections(side)
+
+        start, end = side.get_endpoints()
+        if any(start in s.get_endpoints() for s in self.sides if s != side) and any(end in s.get_endpoints() for s in self.sides if s != side):
+            self.patches.append(self.get_patch(side))
+
+    def add_intersections(self, side):
+        def add_intersection_if_exists(s, vert):
+            i = s.index(vert)
+            if i > 0:
+                s1, s2 = Side(s.edges[:i]), Side(s.edges[i:])
+                self.sides.append(s1)
+                self.sides.append(s2)
+
+        start, end = side.get_endpoints()
+        for s in self.sides:
+            add_intersection_if_exists(s, start)
+            add_intersection_if_exists(s, end)
+        
+    def get_patch(self, side):
         '''
-        Need to take care of 3 cases:
-        1. side is start of a new patch, and may start from a side of a closed patch
-        2. side is continuation of existing patch, and may close the patch
-        3. side splits a closed patch in half
+        Create a patch starting from side, using bfs to find the rest of the sides
         '''
-        for patch in reversed(self.patches): # reversed because we're probably working on a recent patch
-            # case 2
-            if patch.can_add_side(side):
-                patch.add_side(side)
-                if not patch.closed:
-                    open1, open2 = patch.get_open_endpoints()
-                    for other in self.patches:
-                        for other_side in other.sides:
-                            if other_side.contains_full(open1) and other_side.contains_full(open2):
-                                i1, i2 = other_side.index(open1), other_side.index(open2)
-                                if i1 == -1:
-                                    i1 = len(other_side.edges)
-                                if i2 == -1:
-                                    i2 = len(other_side.edges)
-                                if i1 > i2:
-                                    i1, i2 = i2, i1
-                                patch.add_side(Side(other_side.edges[i1:i2]))
-                                assert patch.closed, 'patch should be closed'
-                                print("case 2", patch.closed)
-                                return
-                print("case 2", patch.closed)
-                return
-            # case 3
-            if patch.closed and patch.is_split_by(side):
-                self.patches.remove(patch)
-                p1, p2 = patch.split(side)
-                self.patches.append(p1)
-                self.patches.append(p2)
-                print("case 3")
-                return
-        # case 1
-        patch = AutofillPatch()
-        patch.add_side(side)
-        self.patches.append(patch)
-        print("case 1")
+        queue = collections.deque()
+        queue.append([(side, side.get_endpoints()[1])])
+        while queue:
+            sides = queue.popleft()
+            prev_side, prev_endpoint = sides[-1]
+            for s in self.sides:
+                if s not in [s for s, _ in sides]:
+                    if s.get_endpoints()[0] == prev_endpoint:
+                        s_endpoint = s.get_endpoints()[1]
+                    elif s.get_endpoints()[1] == prev_endpoint:
+                        s_endpoint = s.get_endpoints()[0]
+                    else:
+                        continue
+                    if s_endpoint == sides[0][0].get_endpoints()[0]:
+                        patch_sides = [s for s, _ in sides] + [s]
+                        return AutofillPatch(patch_sides)
+                    queue.append(sides + [(s, s_endpoint)])
+        assert False, 'should have found a patch, but did not'
 
 def process_stroke_filter(stroke, min_distance=1.0, max_distance=2.0):
     ''' filter stroke to pts that are at least min_distance apart '''

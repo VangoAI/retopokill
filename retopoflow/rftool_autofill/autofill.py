@@ -477,10 +477,11 @@ class Autofill(RFTool):
 
             self.patches.add_side(Side(edges))
             # for visual testing
-            e = []
-            for side in self.patches.patches[-1].sides:
-                e += side.edges
-            self.rfcontext.select(e) 
+            if self.patches.patches:
+                e = []
+                for side in self.patches.patches[-1].sides:
+                    e += side.edges
+                self.rfcontext.select(e) 
 
             #self.rfcontext.select(edges)
             self.just_created = True
