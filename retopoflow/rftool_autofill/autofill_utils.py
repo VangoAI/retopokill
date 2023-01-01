@@ -78,6 +78,20 @@ class AutofillPatch:
                 return False
         return True
 
+    def get_open_endpoints(self):
+        '''
+        return the two open endpoints of the patch
+        '''
+        endpoints = []
+        for side in self.sides:
+            start, end = side.get_endpoints() # check start and end because there will inherently be no duplicates anyway
+            if self.count_shared_endpoints(start) == 1:
+                endpoints.append(start)
+            if self.count_shared_endpoints(end) == 1:
+                endpoints.append(end)
+        assert len(endpoints) == 2, 'patch has more than 2 open endpoints'
+        return endpoints
+
     def can_add_side(self, side):
         '''
         check if side can be added to patch
@@ -144,7 +158,7 @@ class AutofillPatch:
                 new_patch.add_side(end_side)
             else:
                 return None
-                
+
             while not new_patch.closed:
                 for s in self.sides:
                     if not s.contains_full(start) and not s.contains_full(end) and new_patch.can_add_side(s): # can't use the sides that cross the split
@@ -183,10 +197,26 @@ class AutofillPatches:
         2. side is continuation of existing patch, and may close the patch
         3. side splits a closed patch in half
         '''
-        for patch in self.patches:
+        for patch in reversed(self.patches): # reversed because we're probably working on a recent patch
             # case 2
             if patch.can_add_side(side):
                 patch.add_side(side)
+                if not patch.closed:
+                    open1, open2 = patch.get_open_endpoints()
+                    for other in self.patches:
+                        for other_side in other.sides:
+                            if other_side.contains_full(open1) and other_side.contains_full(open2):
+                                i1, i2 = other_side.index(open1), other_side.index(open2)
+                                if i1 == -1:
+                                    i1 = len(other_side.edges)
+                                if i2 == -1:
+                                    i2 = len(other_side.edges)
+                                if i1 > i2:
+                                    i1, i2 = i2, i1
+                                patch.add_side(Side(other_side.edges[i1:i2]))
+                                assert patch.closed, 'patch should be closed'
+                                print("case 2", patch.closed)
+                                return
                 print("case 2", patch.closed)
                 return
             # case 3
