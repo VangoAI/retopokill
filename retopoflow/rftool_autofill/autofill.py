@@ -19,165 +19,240 @@ Created by Jonathan Denning, Jonathan Williamson, and Patrick Moore
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
-import os
 import math
-from itertools import chain
-
+import time
 import bgl
+import bpy
+from math import isnan
+
+from contextlib import contextmanager
+
+from mathutils import Vector, Matrix
+from mathutils.geometry import intersect_point_tri_2d
 
 from ..rftool import RFTool
-from ..rfwidgets.rfwidget_default import RFWidget_Default_Factory
-from ..rfwidgets.rfwidget_hidden import RFWidget_Hidden_Factory
+from ..rfwidget import RFWidget
+from ..rfwidgets.rfwidget_default     import RFWidget_Default_Factory
+from ..rfwidgets.rfwidget_brushstroke import RFWidget_BrushStroke_Factory
+from ..rfwidgets.rfwidget_hidden      import RFWidget_Hidden_Factory
 
-from ...addon_common.common.drawing import (
-    CC_DRAW,
-    CC_2D_POINTS,
-    CC_2D_LINES, CC_2D_LINE_LOOP,
-    CC_2D_TRIANGLES, CC_2D_TRIANGLE_FAN,
-)
+
+from ...addon_common.common.debug import dprint
+from ...addon_common.common.fsm import FSM
+from ...addon_common.common.globals import Globals
 from ...addon_common.common.profiler import profiler
 from ...addon_common.common.maths import (
     Point, Vec, Direction,
     Point2D, Vec2D,
-    mid,
+    Accel2D,
+    clamp, mid,
 )
-from ...addon_common.common.fsm import FSM
-from ...addon_common.common.globals import Globals
-from ...addon_common.common.utils import iter_pairs
-from ...addon_common.common.blender import tag_redraw_all
-from ...addon_common.common.boundvar import BoundInt
+from ...addon_common.common.bezier import CubicBezierSpline, CubicBezier
+from ...addon_common.common.utils import iter_pairs, iter_running_sum, min_index, max_index, has_duplicates
+from ...addon_common.common.boundvar import BoundBool, BoundInt, BoundFloat
 from ...addon_common.common.drawing import DrawCallbacks
+from ...config.options import options, themes
 
-from ...config.options import options, themes, visualization
+from .autofill_utils import (
+    AutofillPatches, Side,
+    process_stroke_filter, process_stroke_source,
+    find_edge_cycles,
+    find_edge_strips, get_strip_verts,
+    restroke, walk_to_corner,
+)
 
 class Autofill(RFTool):
     name        = 'Autofill'
     description = 'Draw patches and autofill them'
-    icon        = 'patches-icon.png'
-    help        = 'patches.md'
+    icon        = 'strokes-icon.png'
+    help        = 'strokes.md'
     shortcut    = 'autofill tool'
-    statusbar   = '{{action alt1}} Toggle vertex as a corner\t{{increase count}} Increase segments\t{{decrease count}} Decrease Segments\t{{fill}} Create patch'
-    # ui_config   = 'patches_options.html'
+    statusbar   = '{{insert}} Insert edge strip and bridge\t{{increase count}} Increase segments\t{{decrease count}} Decrease segments'
+    # ui_config   = 'strokes_options.html'
 
-    RFWidget_Default = RFWidget_Default_Factory.create()
-    RFWidget_Move    = RFWidget_Default_Factory.create(cursor='HAND')
-    RFWidget_Hidden  = RFWidget_Hidden_Factory.create()
+    RFWidget_Default     = RFWidget_Default_Factory.create()
+    RFWidget_Move        = RFWidget_Default_Factory.create(cursor='HAND')
+    RFWidget_Hidden      = RFWidget_Hidden_Factory.create()
+    RFWidget_BrushStroke = RFWidget_BrushStroke_Factory.create(
+        'Autofill stroke',
+        BoundInt('''options['strokes radius']''', min_value=1),
+        outer_border_color=themes['strokes'], # TODO: add theme for autofill
+    )
+    
+    @property
+    def cross_count(self):
+        return self.strip_crosses or 0
+    @cross_count.setter
+    def cross_count(self, v):
+        if self.strip_crosses == v: return
+        if self.replay is None: return
+        if self.strip_crosses is None: return
+        self.strip_crosses = v
+        if self.strip_crosses is not None: self.replay()
+
+    @property
+    def loop_count(self):
+        return self.strip_loops or 0
+    @loop_count.setter
+    def loop_count(self, v):
+        if self.strip_loops == v: return
+        if self.replay is None: return
+        if self.strip_loops is None: return
+        self.strip_loops = v
+        if self.strip_loops is not None: self.replay()
 
     @RFTool.on_init
     def init(self):
         self.rfwidgets = {
             'default': self.RFWidget_Default(self),
+            'brush':   self.RFWidget_BrushStroke(self),
             'hover':   self.RFWidget_Move(self),
             'hidden':  self.RFWidget_Hidden(self),
         }
         self.rfwidget = None
-        self.corners = {}
-        self.crosses = None
-        self._var_angle = BoundInt('''options['patches angle']''', min_value=0, max_value=180)
-        self._var_crosses = BoundInt('''self.var_crosses''', min_value=1, max_value=500)
+        self.strip_crosses = None
+        self.strip_loops = None
+        self.patches = AutofillPatches()
+        self._var_fixed_span_count = BoundInt('''options['strokes span count']''', min_value=1, max_value=128)
+        self._var_cross_count = BoundInt('''self.cross_count''', min_value=1, max_value=500)
+        self._var_loop_count  = BoundInt('''self.loop_count''', min_value=1, max_value=500)
+
+    @contextmanager
+    def defer_recomputing_while(self):
+        try:
+            self.defer_recomputing = True
+            yield
+        finally:
+            self.defer_recomputing = False
+            self.update()
+
+    def update_span_mode(self):
+        mode = options['strokes span insert mode']
+        self.ui_summary.innerText = f'Strokes: {mode}'
+        self.ui_insert.dirty(cause='insert mode change', children=True)
+
+    @RFTool.on_ui_setup
+    def ui(self):
+        # ui_options = self.document.body.getElementById('strokes-options')
+        # self.ui_summary = ui_options.getElementById('strokes-summary')
+        # self.ui_insert = ui_options.getElementById('strokes-insert-modes')
+        # self.ui_radius = ui_options.getElementById('strokes-radius')
+        # def dirty_radius():
+        #     return #self.ui_radius.dirty(cause='radius changed')
+        # self.rfwidgets['brush'].get_radius_boundvar().on_change(dirty_radius)
+        # self.update_span_mode()
+        return
 
     @RFTool.on_reset
     def reset(self):
+        self.replay = None
+        self.strip_crosses = None
+        self.strip_loops = None
+        self.strip_edges = False
+        self.just_created = False
         self.defer_recomputing = False
-
-    @property
-    def var_crosses(self):
-        if self.crosses is None: return 1
-        return self.crosses - 1
-    @var_crosses.setter
-    def var_crosses(self, v):
-        nv = max(1, int(v)+1)
-        if self.crosses == nv: return
-        self.crosses = nv
-        self._recompute()
-
-    def update_ui(self):
-        self._var_crosses.disabled = (self.crosses is None)
-
-    def filter_edge_selection(self, bme, no_verts_select=True, ratio=0.33):
-        if bme.select:
-            # edge is already selected
-            return True
-        bmv0, bmv1 = bme.verts
-        s0, s1 = bmv0.select, bmv1.select
-        if s0 and s1:
-            # both verts are selected, so return True
-            return True
-        if not s0 and not s1:
-            if no_verts_select:
-                # neither are selected, so return True by default
-                return True
-            else:
-                # return True if none are selected; otherwise return False
-                return self.rfcontext.none_selected()
-        # if mouse is at least a ratio of the distance toward unselected vert, return True
-        if s1: bmv0, bmv1 = bmv1, bmv0
-        p = self.actions.mouse
-        p0 = self.rfcontext.Point_to_Point2D(bmv0.co)
-        p1 = self.rfcontext.Point_to_Point2D(bmv1.co)
-        v01 = p1 - p0
-        l01 = v01.length
-        d01 = v01 / l01
-        dot = d01.dot(p - p0)
-        return dot / l01 > ratio
-
-    @RFTool.on_reset
-    @RFTool.on_target_change
-    def update(self):
-        if self.defer_recomputing: return
-        self.rfcontext.get_vis_accel()
-        self.crosses = None
-        self._recompute()
+        self.hovering_edge = None
+        self.hovering_edge_time = 0
+        self.hovering_sel_edge = None
+        self.connection_pre = None
+        self.connection_pre_time = 0
+        self.connection_post = None
         self.update_ui()
 
-    @FSM.on_state('main')
-    def main(self):
-        self.hovering_sel_edge,_ = self.rfcontext.accel_nearest2D_edge(max_dist=options['action dist'], selected_only=True)
-        self.hovering_sel_face,_ = self.rfcontext.accel_nearest2D_face(max_dist=options['action dist'], selected_only=True)
+    def update_ui(self):
+        if self.replay is None:
+            self._var_cross_count.disabled = True
+            self._var_loop_count.disabled = True
+        else:
+            self._var_cross_count.disabled = self.strip_crosses is None or self.strip_edges
+            self._var_loop_count.disabled = self.strip_loops is None
 
-        if self.hovering_sel_edge or self.hovering_sel_face:
+    @RFTool.on_target_change
+    def update_target(self):
+        if self.defer_recomputing: return
+        if not self.just_created: self.reset()
+        else: self.just_created = False
+
+    @RFTool.on_target_change
+    @RFTool.on_view_change
+    def update(self):
+        if self.defer_recomputing: return
+
+        self.update_ui()
+
+        self.edge_collections = []
+        edges = self.get_edges_for_extrude()
+        while edges:
+            current = set()
+            working = set([edges.pop()])
+            while working:
+                e = working.pop()
+                if e in current: continue
+                current.add(e)
+                edges.discard(e)
+                v0,v1 = e.verts
+                working |= {e for e in (v0.link_edges + v1.link_edges) if e in edges}
+            ctr = Point.average(v.co for v in {v for e in current for v in e.verts})
+            self.edge_collections.append({
+                'edges': current,
+                'center': ctr,
+            })
+
+    def filter_edge_selection(self, bme):
+        return bme.select or len(bme.link_faces) < 2
+
+    @FSM.on_state('main')
+    def modal_main(self):
+        if not self.actions.using('action', ignoredrag=True):
+            # only update while not pressing action, because action includes drag, and
+            # the artist might move mouse off selected edge before drag kicks in!
+            if time.time() - self.hovering_edge_time > 0.125:
+                self.hovering_edge_time = time.time()
+                self.hovering_edge,_     = self.rfcontext.accel_nearest2D_edge(max_dist=options['action dist'])
+                self.hovering_sel_edge,_ = self.rfcontext.accel_nearest2D_edge(max_dist=options['action dist'], selected_only=True)
+            pass
+
+        self.connection_post = None
+        if self.actions.using_onlymods('insert'):
+            if time.time() - self.connection_pre_time > 0.01:
+                self.connection_pre_time = time.time()
+                hovering_sel_vert_snap,_ = self.rfcontext.accel_nearest2D_vert(max_dist=options['strokes snap dist'])
+                if options['strokes snap stroke'] and hovering_sel_vert_snap:
+                    self.connection_pre = (
+                        self.rfcontext.Point_to_Point2D(hovering_sel_vert_snap.co),
+                        self.actions.mouse,
+                    )
+                else:
+                    self.connection_pre = None
+        else:
+            self.connection_pre = None
+
+        if self.actions.using_onlymods('insert'):
+            self.set_widget('brush')
+        elif self.hovering_sel_edge:
             self.set_widget('hover')
         else:
             self.set_widget('default')
 
         if self.handle_inactive_passthrough(): return
 
-        if self.hovering_sel_edge or self.hovering_sel_face:
+        if self.rfcontext.actions.pressed('pie menu alt0'):
+            def callback(option):
+                if not option: return
+                options['strokes span insert mode'] = option
+                self.update_span_mode()
+            self.rfcontext.show_pie_menu([
+                'Brush Size',
+                'Fixed',
+            ], callback, highlighted=options['strokes span insert mode'])
+            return
+
+        if self.hovering_sel_edge:
             if self.actions.pressed('action'):
                 self.move_done_pressed = None
                 self.move_done_released = 'action'
                 self.move_cancelled = 'cancel'
                 return 'move'
-
-        if self.rfcontext.actions.pressed('action alt1'):
-            vert,_ = self.rfcontext.accel_nearest2D_vert(max_dist=10)
-            if not vert or not vert.select: return
-            if vert in self.shapes['corners']:
-                self.corners[vert] = False
-            else:
-                self.corners[vert] = not self.corners.get(vert, False)
-            self.update()
-            return
-
-        if self.rfcontext.actions.pressed('fill'):
-            self.fill_patch()
-            return
-
-        if self.rfcontext.actions.pressed('grab'):
-            self.move_done_pressed = 'confirm'
-            self.move_done_released = None
-            self.move_cancelled = 'cancel'
-            return 'move'
-
-        if self.rfcontext.actions.pressed('increase count'):
-            if self.crosses is not None:
-                self.crosses += 1
-                self._recompute()
-
-        if self.rfcontext.actions.pressed('decrease count'):
-            if self.crosses is not None and self.crosses > 2:
-                self.crosses -= 1
-                self._recompute()
 
         if self.actions.pressed({'select path add'}):
             return self.rfcontext.select_path(
@@ -199,17 +274,20 @@ class Autofill(RFTool):
             )
 
         if self.actions.pressed({'select single', 'select single add'}, unpress=False):
+            print("click")
             sel_only = self.actions.pressed('select single')
-            hovering_edge,_ = self.rfcontext.accel_nearest2D_edge(max_dist=options['action dist'])
-            if not sel_only and not hovering_edge: return
+            self.actions.unpress()
+            bmf,_ = self.rfcontext.accel_nearest2D_face(max_dist=options['select dist'])
+            sel = self.hovering_edge or bmf
+            print(sel)
+            if not sel_only and not sel: return
             self.rfcontext.undo_push('select')
             if sel_only: self.rfcontext.deselect_all()
-            if not hovering_edge: return
-            if sel_only or hovering_edge.select == False:
-                self.rfcontext.select(hovering_edge, supparts=False, only=False)
-            else:
-                self.rfcontext.deselect(hovering_edge)
+            if not sel: return
+            if sel.select: self.rfcontext.deselect(sel)
+            else:                         self.rfcontext.select(sel, supparts=False, only=sel_only)
             return
+
 
         if self.rfcontext.actions.pressed({'select smart', 'select smart add'}, unpress=False):
             sel_only = self.rfcontext.actions.pressed('select smart')
@@ -217,574 +295,322 @@ class Autofill(RFTool):
 
             self.rfcontext.undo_push('select smart')
             selectable_edges = [e for e in self.rfcontext.visible_edges() if len(e.link_faces) < 2]
-            edge,_ = self.rfcontext.nearest2D_edge(edges=selectable_edges, max_dist=options['action dist'])
+            edge,_ = self.rfcontext.nearest2D_edge(edges=selectable_edges, max_dist=10)
             if not edge: return
             #self.rfcontext.select_inner_edge_loop(edge, supparts=False, only=sel_only)
             self.rfcontext.select_edge_loop(edge, supparts=False, only=sel_only)
 
+        if self.rfcontext.actions.pressed('grab'):
+            self.move_done_pressed = 'confirm'
+            self.move_done_released = None
+            self.move_cancelled = 'cancel'
+            return 'move'
+
+        if self.rfcontext.actions.pressed('increase count') and self.replay:
+            # print('increase count')
+            if self.strip_crosses is not None and not self.strip_edges:
+                self.strip_crosses += 1
+                self.replay()
+            elif self.strip_loops is not None:
+                self.strip_loops += 1
+                self.replay()
+
+        if self.rfcontext.actions.pressed('decrease count') and self.replay:
+            # print('decrease count')
+            if self.strip_crosses is not None and self.strip_crosses > 1 and not self.strip_edges:
+                self.strip_crosses -= 1
+                self.replay()
+            elif self.strip_loops is not None and self.strip_loops > 1:
+                self.strip_loops -= 1
+                self.replay()
+
+    @RFWidget.on_actioning('Autofill stroke')
+    def stroking(self):
+        hovering_sel_vert_snap,_ = self.rfcontext.accel_nearest2D_vert(max_dist=options['strokes snap dist'])
+        if options['strokes snap stroke'] and hovering_sel_vert_snap:
+            self.connection_post = (
+                self.rfcontext.Point_to_Point2D(hovering_sel_vert_snap.co),
+                self.actions.mouse,
+            )
+        else:
+            self.connection_post = None
+
+    @RFWidget.on_action('Autofill stroke')
+    def stroke(self):
+        # called when artist finishes a stroke
+
+        Point_to_Point2D        = self.rfcontext.Point_to_Point2D
+        raycast_sources_Point2D = self.rfcontext.raycast_sources_Point2D
+        accel_nearest2D_vert    = self.rfcontext.accel_nearest2D_vert
+
+        # filter stroke down where each pt is at least 1px away to eliminate local wiggling
+        radius = self.rfwidgets['brush'].radius
+        stroke = self.rfwidgets['brush'].stroke2D
+        stroke = process_stroke_filter(stroke)
+        stroke = process_stroke_source(
+            stroke,
+            raycast_sources_Point2D,
+            Point_to_Point2D=Point_to_Point2D,
+            clamp_point_to_symmetry=self.rfcontext.clamp_point_to_symmetry,
+        )
+        stroke3D = [raycast_sources_Point2D(s)[0] for s in stroke]
+        stroke3D = [s for s in stroke3D if s]
+
+        # bail if there aren't enough stroke data points to work with
+        if len(stroke3D) < 2: return
+
+        sel_verts = self.rfcontext.get_selected_verts()
+        sel_edges = self.rfcontext.get_selected_edges()
+        s0, s1 = Point_to_Point2D(stroke3D[0]), Point_to_Point2D(stroke3D[-1])
+        bmv0, _ = accel_nearest2D_vert(point=s0, max_dist=options['strokes snap dist']) # self.rfwidgets['brush'].radius)
+        bmv1, _ = accel_nearest2D_vert(point=s1, max_dist=options['strokes snap dist']) # self.rfwidgets['brush'].radius)
+        if not options['strokes snap stroke']:
+            if bmv0 and not bmv0.select: bmv0 = None
+            if bmv1 and not bmv1.select: bmv1 = None
+        bmv0_sel = bmv0 and bmv0 in sel_verts
+        bmv1_sel = bmv1 and bmv1 in sel_verts
+
+        if bmv0:
+            stroke3D = [bmv0.co] + stroke3D
+        if bmv1:
+            stroke3D = stroke3D + [bmv1.co]
+
+        self.strip_stroke3D = stroke3D
+        self.strip_crosses = None
+        self.strip_loops = None
+        self.strip_edges = False
+        self.replay = None
+
+        # is the stroke in a circle?  note: circle must have a large enough radius
+        cyclic  = (stroke[0] - stroke[-1]).length < radius
+        cyclic &= any((s - stroke[0]).length > 2.0 * radius for s in stroke)
+
+        if cyclic:
+            self.replay = self.create_cycle # TODO: make sure the "circle" doesn't have too many sides, or else we can't autofill it
+        else:
+            self.replay = self.create_strip
+
+        if self.replay: self.replay()
+
+
+    def get_edges_for_extrude(self, only_closest=None):
+        edges = { e for e in self.rfcontext.get_selected_edges() if e.is_boundary or e.is_wire }
+        if not only_closest:
+            return edges
+        # TODO: find vert-connected-edge-island that has the edge closest to stroke
+        return edges
+
+    @RFTool.dirty_when_done
+    def create_cycle(self):
+        Point_to_Point2D = self.rfcontext.Point_to_Point2D
+        stroke = [Point_to_Point2D(s) for s in self.strip_stroke3D]
+        stroke += stroke[:1]
+        if not all(stroke): return  # part of stroke cannot project
+
+        if self.strip_crosses is not None:
+            self.rfcontext.undo_repush('create cycle')
+        else:
+            self.rfcontext.undo_push('create cycle')
+
+        if self.strip_crosses is None:
+            stroke_len = sum((s1 - s0).length for (s0, s1) in iter_pairs(stroke, wrap=False))
+            self.strip_crosses = max(1, math.ceil(stroke_len / (2 * self.rfwidgets['brush'].radius)))
+        crosses = self.strip_crosses
+        percentages = [i / crosses for i in range(crosses)]
+        nstroke = restroke(stroke, percentages)
+
+        if len(nstroke) <= 2:
+            # too few vertices for a cycle
+            self.rfcontext.alert_user(
+                'Could not find create cycle from stroke.  Please try again.'
+            )
+            return
+
+        with self.defer_recomputing_while():
+            verts = [self.rfcontext.new2D_vert_point(s) for s in nstroke]
+            edges = [self.rfcontext.new_edge([v0, v1]) for (v0, v1) in iter_pairs(verts, wrap=True)]
+            self.patches.add_side(Side(edges))
+            self.rfcontext.select(edges)
+            self.just_created = True
+
+    @RFTool.dirty_when_done
+    def create_strip(self):
+        Point_to_Point2D = self.rfcontext.Point_to_Point2D
+        stroke = [Point_to_Point2D(s) for s in self.strip_stroke3D]
+        if not all(stroke): return  # part of stroke cannot project
+
+        if self.strip_crosses is not None:
+            self.rfcontext.undo_repush('create strip')
+        else:
+            self.rfcontext.undo_push('create strip')
+
+        self.rfcontext.get_vis_accel(force=True)
+
+        if self.strip_crosses is None:
+            stroke_len = sum((s1 - s0).length for (s0, s1) in iter_pairs(stroke, wrap=False))
+            self.strip_crosses = max(1, math.ceil(stroke_len / (2 * self.rfwidgets['brush'].radius)))
+        crosses = self.strip_crosses
+        percentages = [i / crosses for i in range(crosses+1)]
+        nstroke = restroke(stroke, percentages)
+
+        if len(nstroke) < 2: return  # too few stroke points, from a short stroke?
+
+        snap0,_ = self.rfcontext.accel_nearest2D_vert(point=nstroke[0],  max_dist=options['strokes merge dist']) # self.rfwidgets['brush'].radius)
+        snap1,_ = self.rfcontext.accel_nearest2D_vert(point=nstroke[-1], max_dist=options['strokes merge dist']) # self.rfwidgets['brush'].radius)
+        if not options['strokes snap stroke'] and snap0 and not snap0.select: snap0 = None
+        if not options['strokes snap stroke'] and snap1 and not snap1.select: snap1 = None
+
+        with self.defer_recomputing_while():
+            verts = [self.rfcontext.new2D_vert_point(s) for s in nstroke]
+            edges = [self.rfcontext.new_edge([v0, v1]) for (v0, v1) in iter_pairs(verts, wrap=False)]
+
+            if snap0:
+                co = snap0.co
+                verts[0].merge(snap0)
+                verts[0].co = co
+                self.rfcontext.clean_duplicate_bmedges(verts[0])
+            if snap1:
+                co = snap1.co
+                verts[-1].merge(snap1)
+                verts[-1].co = co
+                self.rfcontext.clean_duplicate_bmedges(verts[-1])
+
+            self.patches.add_side(Side(edges))
+            # for visual testing
+            e = []
+            for side in self.patches.patches[-1].sides:
+                e += side.edges
+            self.rfcontext.select(e) 
+
+            #self.rfcontext.select(edges)
+            self.just_created = True
+
+    def mergeSnapped(self):
+        """ Merging colocated visible verts """
+
+        if not options['strokes automerge']: return
+
+        # TODO: remove colocated faces
+        if self.mousedown is None: return
+        delta = Vec2D(self.actions.mouse - self.mousedown)
+        set2D_vert = self.rfcontext.set2D_vert
+        update_verts = []
+        merge_dist = self.rfcontext.drawing.scale(options['strokes merge dist'])
+        for bmv,xy in self.bmverts:
+            if not xy: continue
+            xy_updated = xy + delta
+            for bmv1,xy1 in self.vis_bmverts:
+                if not xy1: continue
+                if bmv1 == bmv: continue
+                if not bmv1.is_valid: continue
+                d = (xy_updated - xy1).length
+                if (xy_updated - xy1).length > merge_dist:
+                    continue
+                bmv1.merge_robust(bmv)
+                self.rfcontext.select(bmv1)
+                update_verts += [bmv1]
+                break
+        if update_verts:
+            self.rfcontext.update_verts_faces(update_verts)
+            #self.set_next_state()
+
     @FSM.on_state('move', 'enter')
     def move_enter(self):
-        self.sel_verts = self.rfcontext.get_selected_verts()
-        self.vis_accel = self.rfcontext.get_vis_accel()
-        self.vis_verts = self.rfcontext.accel_vis_verts
-        Point_to_Point2D = self.rfcontext.Point_to_Point2D
-
-        self.bmverts = [(bmv, Point_to_Point2D(bmv.co)) for bmv in self.sel_verts]
-        self.vis_bmverts = [(bmv, Point_to_Point2D(bmv.co)) for bmv in self.vis_verts if bmv and bmv not in self.sel_verts]
-        self.mousedown = self.rfcontext.actions.mouse
-        self.defer_recomputing = True
-
         self.rfcontext.undo_push('move grabbed')
 
-        self.rfcontext.set_accel_defer(True)
+        self.move_opts = {
+            'vis_accel': self.rfcontext.get_custom_vis_accel(
+                selection_only=False,
+                include_edges=False,
+                include_faces=False,
+            ),
+        }
 
+        sel_verts = self.rfcontext.get_selected_verts()
+        vis_accel = self.rfcontext.get_vis_accel()
+        vis_verts = self.rfcontext.accel_vis_verts
+        Point_to_Point2D = self.rfcontext.Point_to_Point2D
+
+        bmverts = [(bmv, Point_to_Point2D(bmv.co)) for bmv in sel_verts]
+        self.bmverts = [(bmv, co) for (bmv, co) in bmverts if co]
+        self.vis_bmverts = [(bmv, Point_to_Point2D(bmv.co)) for bmv in vis_verts if bmv.is_valid and bmv not in sel_verts]
+        self.mousedown = self.rfcontext.actions.mouse
+        self.defer_recomputing = True
+        self.rfcontext.split_target_visualization_selected()
+        self.rfcontext.set_accel_defer(True)
         self._timer = self.actions.start_timer(120)
 
         if options['hide cursor on tweak']: self.set_widget('hidden')
 
     @FSM.on_state('move')
-    def move_main(self):
+    @RFTool.dirty_when_done
+    @profiler.function
+    def move(self):
         released = self.rfcontext.actions.released
-        if self.move_done_pressed and self.rfcontext.actions.pressed(self.move_done_pressed):
+        if self.actions.pressed(self.move_done_pressed):
             self.defer_recomputing = False
-            self.update()
+            self.mergeSnapped()
             return 'main'
-        if self.actions.released(self.move_done_released, ignoredrag=True):
+        if self.actions.released(self.move_done_released):
             self.defer_recomputing = False
-            self.update()
+            self.mergeSnapped()
             return 'main'
-        if self.move_cancelled and self.rfcontext.actions.pressed('cancel'):
+        if self.actions.pressed('cancel'):
             self.defer_recomputing = False
             self.rfcontext.undo_cancel()
             return 'main'
 
+        # only update verts on timer events and when mouse has moved
+        #if not self.rfcontext.actions.timer: return
+        #if self.actions.mouse_prev == self.actions.mouse: return
         if not self.actions.mousemove_stop: return
-        # if not self.rfcontext.actions.timer: return
-        # if self.actions.mouse_prev == self.actions.mouse: return
-        # # if not self.actions.mousemove: return
 
-        delta = Vec2D(self.actions.mouse - self.mousedown)
+        delta = Vec2D(self.rfcontext.actions.mouse - self.mousedown)
         set2D_vert = self.rfcontext.set2D_vert
         for bmv,xy in self.bmverts:
             xy_updated = xy + delta
-            set2D_vert(bmv, xy_updated)
-            # # check if xy_updated is "close" to any visible verts (in image plane)
-            # # if so, snap xy_updated to vert position (in image plane)
-            # if options['polypen automerge']:
-            #     for bmv1,xy1 in self.vis_bmverts:
-            #         if (xy_updated - xy1).length < self.rfcontext.drawing.scale(10):
-            #             set2D_vert(bmv, xy1)
-            #             break
-            #     else:
-            #         set2D_vert(bmv, xy_updated)
-            # else:
-            #     set2D_vert(bmv, xy_updated)
+            # check if xy_updated is "close" to any visible verts (in image plane)
+            # if so, snap xy_updated to vert position (in image plane)
+            if options['polypen automerge']:
+                bmv1,d = self.rfcontext.accel_nearest2D_vert(point=xy_updated, vis_accel=self.move_opts['vis_accel'], max_dist=options['strokes merge dist'])
+                if bmv1 is None:
+                    set2D_vert(bmv, xy_updated)
+                    continue
+                xy1 = self.rfcontext.Point_to_Point2D(bmv1.co)
+                if not xy1:
+                    set2D_vert(bmv, xy_updated)
+                    continue
+                set2D_vert(bmv, xy1)
+            else:
+                set2D_vert(bmv, xy_updated)
         self.rfcontext.update_verts_faces(v for v,_ in self.bmverts)
-
-        self.rfcontext.dirty()
 
     @FSM.on_state('move', 'exit')
     def move_exit(self):
         self._timer.done()
         self.rfcontext.set_accel_defer(False)
-
-    @RFTool.dirty_when_done
-    def fill_patch(self):
-        if not self.previz: return
-
-        new_vert = self.rfcontext.new_vert_point
-        new_face = self.rfcontext.new_face
-
-        self.rfcontext.undo_push('fill')
-        for previz in self.previz:
-            verts,faces = previz['verts'],previz['faces']
-            verts = [(new_vert(v) if type(v) is Point else v) for v in verts]
-            for face in faces: new_face([verts[iv] for iv in face])
-
-        self.update()
-
-
-
-    def draw_previz(self, previz, poly_alpha=0.2):
-        point_to_point2D = self.rfcontext.Point_to_Point2D
-        line_color = themes['new']
-        poly_color = [line_color[0], line_color[1], line_color[2], line_color[3] * poly_alpha]
-
-        verts = [point_to_point2D(v if type(v) is Point else v.co) for v in previz['verts']]
-
-        with Globals.drawing.draw(CC_2D_LINES) as draw:
-            draw.color(line_color)
-            for i0,i1 in previz['edges']:
-                v0,v1 = verts[i0],verts[i1]
-                if v0 and v1:
-                    draw.vertex(v0)
-                    draw.vertex(v1)
-
-        with Globals.drawing.draw(CC_2D_TRIANGLES) as draw:
-            draw.color(poly_color)
-            for f in previz['faces']:
-                coords = [verts[i] for i in f]
-                if all(coords):
-                    co0 = coords[0]
-                    for i in range(1, len(coords)-1):
-                        draw.vertex(co0)
-                        draw.vertex(coords[i])
-                        draw.vertex(coords[i+1])
+        self.rfcontext.clear_split_target_visualization()
 
     @DrawCallbacks.on_draw('post2d')
-    @FSM.onlyinstate('main')
     def draw_postpixel(self):
-        point_to_point2D = self.rfcontext.Point_to_Point2D
+        if self._fsm.state == 'move': return
+        bgl.glEnable(bgl.GL_BLEND)
+        point_to_point2d = self.rfcontext.Point_to_Point2D
+        up = self.rfcontext.Vec_up()
+        size_to_size2D = self.rfcontext.size_to_size2D
+        text_draw2D = self.rfcontext.drawing.text_draw2D
         self.rfcontext.drawing.set_font_size(12)
 
-        def get_pos(strips):
-            #xy = max((point_to_point2D(bmv.co) for strip in strips for bme in strip for bmv in bme.verts), key=lambda xy:xy.y+xy.x/2)
-            bmvs = [bmv for strip in strips for bme in strip for bmv in bme.verts]
-            vs = [point_to_point2D(bmv.co) for bmv in bmvs]
-            vs = [Vec2D(v) for v in vs if v]
-            if not vs: return None
-            xy = sum(vs, Vec2D((0,0))) / len(vs)
-            return xy+Vec2D((2,14))
-        def text_draw2D(s, strips):
-            if not strips: return
-            xy = get_pos(strips)
-            if not xy: return
-            self.rfcontext.drawing.text_draw2D(s, xy, color=(1,1,0,1), dropshadow=(0,0,0,0.5))
+        for collection in self.edge_collections:
+            l = len(collection['edges'])
+            c = collection['center']
+            xy = point_to_point2d(c)
+            if not xy: continue
+            xy.y += 10
+            text_draw2D(str(l), xy, color=(1,1,0,1), dropshadow=(0,0,0,0.5))
 
-        for rect_strips in self.shapes['rect']:
-            c0,c1,c2,c3 = map(len, rect_strips)
-            if c0==c2 and c1==c3:
-                s = 'rect: %dx%d' % (c0,c1)
-                text_draw2D(s, rect_strips)
-            else:
-                for strip in rect_strips:
-                    s = 'bad rect: %d' % len(strip)
-                    text_draw2D(s, [strip])
+        if self.connection_pre:
+            Globals.drawing.draw2D_linestrip(self.connection_pre, themes['stroke'], width=2, stipple=[4,4])
+        if self.connection_post:
+            Globals.drawing.draw2D_linestrip(self.connection_post, themes['stroke'], width=2, stipple=[4,4])
 
-        for I_strips in self.shapes['I']:
-            c = len(I_strips[0])
-            s = 'I: %d' % (c,)
-            text_draw2D(s, I_strips)
-        for L_strips in self.shapes['L']:
-            c0,c1 = map(len, L_strips)
-            s = 'L: %dx%d' % (c0,c1)
-            text_draw2D(s, L_strips)
-        for C_strips in self.shapes['C']:
-            c0,c1,c2 = map(len, C_strips)
-            if c0==c2:
-                s = 'C: %dx%d' % (c0,c1)
-                text_draw2D(s, C_strips)
-            else:
-                for strip in C_strips:
-                    s = 'bad C: %d' % len(strip)
-                    text_draw2D(s, [strip])
-
-        bgl.glEnable(bgl.GL_BLEND)
-        CC_DRAW.stipple(pattern=[4,4])
-        CC_DRAW.point_size(4)
-        CC_DRAW.line_width(2)
-
-        for previz in self.previz: self.draw_previz(previz)
-
-        CC_DRAW.stipple()
-        bgl.glEnable(bgl.GL_BLEND)
-        CC_DRAW.point_size(visualization['point size highlight'])
-        with Globals.drawing.draw(CC_2D_POINTS) as draw:
-            draw.color(visualization['point color highlight'])
-            for corner in self.shapes['corners']:
-                p = point_to_point2D(corner.co)
-                if p: draw.vertex(p)
-
-
-
-    def _clear_shapes(self):
-        self.shapes = {
-            'O':    [],     # special loop
-            'eye':  [],     # loops
-            'tri':  [],
-            'rect': [],
-            'ngon': [],
-            'C':    [],     # strings
-            'L':    [],
-            'I':    [],
-            'else': [],
-            'corners': [],
-        }
-        self.previz = []
-
-    def _recompute(self):
-        min_angle = options['patches angle']
-        def nearest_sources_Point(p):
-            p,n,i,d = self.rfcontext.nearest_sources_Point(p)
-            return self.rfcontext.clamp_point_to_symmetry(p)
-
-        self._clear_shapes()
-        # remove old corners that are no longer valid or selected
-        self.corners = {v:corner for (v, corner) in self.corners.items() if v.is_valid and v.select}
-
-        ##############################################
-        # find edges that could be part of a strip
-        edges = set(e for e in self.rfcontext.get_selected_edges() if len(e.link_faces) < 2)
-
-
-        ###################
-        # find strips
-        remaining_edges = set(edges)
-        strips = []
-        neighbors = { e:[] for e in edges }
-        while remaining_edges:
-            strip = set()
-            working = { next(iter(remaining_edges)) }
-            while working:
-                edge = working.pop()
-                strip.add(edge)
-                remaining_edges.remove(edge)
-                v0,v1 = edge.verts
-                for e in chain(v0.link_edges, v1.link_edges):
-                    if e not in remaining_edges: continue
-                    bmv1 = edge.shared_vert(e)
-                    if self.corners.get(bmv1, False): continue
-                    bmv0 = edge.other_vert(bmv1)
-                    bmv2 = e.other_vert(bmv1)
-                    d10 = Direction(bmv0.co-bmv1.co)
-                    d12 = Direction(bmv2.co-bmv1.co)
-                    angle = math.degrees(math.acos(mid(-1,1,d10.dot(d12))))
-                    if self.corners.get(bmv1, True) and angle < min_angle: continue
-                    neighbors[edge].append(e)
-                    neighbors[e].append(edge)
-                    working.add(e)
-            strips += [strip]
-
-
-        ##############################################
-        # order strips to find corners and O-shapes
-        nstrips = []
-        corners = dict()
-        for edges in strips:
-            if len(edges) == 1:
-                # single edge in strip
-                edge = next(iter(edges))
-                strip = [edge]
-                v0,v1 = edge.verts
-                nstrips.append(strip)
-                corners[v0] = corners.get(v0, []) + [strip]
-                corners[v1] = corners.get(v1, []) + [strip]
-                continue
-            end_edges = [edge for edge in edges if len(neighbors[edge])==1]
-            if not end_edges:
-                # could not find corners: O-shaped!
-                strip = [next(iter(edges))]
-                strip.append(next(iter(neighbors[strip[0]])))
-                remaining_edges = set(edges) - set(strip)
-                isbad = False
-                while remaining_edges:
-                    next_edges = [edge for edge in neighbors[strip[-1]] if edge in remaining_edges]
-                    if len(next_edges) != 1:
-                        # unexpected number of edges found!
-                        isbad = True
-                        break
-                    strip.append(next_edges[0])
-                    remaining_edges.remove(next_edges[0])
-                if isbad: continue
-                self.shapes['O'].append(strip)
-                continue
-            strip = [end_edges[0]]
-            remaining_edges = set(edges) - set(strip)
-            isbad = False
-            while remaining_edges:
-                next_edges = [edge for edge in neighbors[strip[-1]] if edge in remaining_edges]
-                if len(next_edges) != 1:
-                    # unexpected number of edges found
-                    # see GitHub issue #481 (https://github.com/CGCookie/retopoflow/issues/481)
-                    isbad = True
-                    break
-                strip.append(next_edges[0])
-                remaining_edges.remove(next_edges[0])
-            if isbad: continue
-            v0 = strip[0].other_vert(strip[0].shared_vert(strip[1]))
-            v1 = strip[-1].other_vert(strip[-1].shared_vert(strip[-2]))
-            corners[v0] = corners.get(v0, []) + [strip]
-            corners[v1] = corners.get(v1, []) + [strip]
-            nstrips.append(strip)
-        strips = nstrips
-
-
-        ##################################################################
-        # find all strings (I,L,C,else) and loops (cat,tri,rect,ngon)
-        # note: all corner verts with one strip are *not* in a loop
-
-        # ignore corners with 3+ strips
-        ignore_corners = {c for c in corners if len(corners[c]) > 2}
-
-        def align_strips(strips):
-            ''' make sure that the edges at the end of adjacent strips share a vertex '''
-            if len(strips) == 1: return strips
-            strip0,strip1 = strips[:2]
-            if strip0[0].share_vert(strip1[0]) or strip0[0].share_vert(strip1[-1]): strip0.reverse()
-            assert strip0[-1].share_vert(strip1[0]) or strip0[-1].share_vert(strip1[-1])
-            for strip0,strip1 in zip(strips[:-1],strips[1:]):
-                if strip1[-1].share_vert(strip0[-1]): strip1.reverse()
-                assert strip1[0].share_vert(strip0[-1])
-            return strips
-
-        remaining_corners = set(corners.keys())
-        string_corners = set()
-        loop_corners = set()
-        strings_strips = list()
-        loops_strips = list(self.shapes['O'])
-
-        # find strips
-        while remaining_corners:
-            c = next((c for c in remaining_corners if len(corners[c]) == 1), None)
-            if not c: break
-            remaining_corners.remove(c)
-            string_corners.add(c)
-            string_strips = [corners[c][0]]
-            ignore = c in ignore_corners
-            while True:
-                s = string_strips[-1]
-                c = next((c for c in remaining_corners if s in corners[c]), None)
-                if not c: break
-                ignore |= c in ignore_corners
-                remaining_corners.remove(c)
-                string_corners.add(c)
-                if len(corners[c]) != 2: break
-                ns = next(ns for ns in corners[c] if ns != s)
-                string_strips.append(ns)
-            string_strips = align_strips(string_strips)
-            if ignore: continue
-            strings_strips.append(string_strips)
-            if len(string_strips) == 1:
-                self.shapes['I'].append(string_strips)
-            elif len(string_strips) == 2:
-                self.shapes['L'].append(string_strips)
-            elif len(string_strips) == 3:
-                self.shapes['C'].append(string_strips)
-            else:
-                self.shapes['else'].append(string_strips)
-
-        # find loops
-        while remaining_corners:
-            c = next(iter(remaining_corners))
-            remaining_corners.remove(c)
-            loop_corners.add(c)
-            loop_strips = [corners[c][0]]
-            ignore = c in ignore_corners
-            while True:
-                s = loop_strips[-1]
-                c = next((c for c in remaining_corners if s in corners[c]), None)
-                if not c: break
-                ignore |= c in ignore_corners
-                remaining_corners.remove(c)
-                loop_corners.add(c)
-                ns = next((ns for ns in corners[c] if ns != s), None)
-                if not ns: break
-                loop_strips.append(ns)
-            loop_strips = align_strips(loop_strips)
-            if ignore: continue
-            # make sure loop is actually closed
-            s0,s1 = loop_strips[0],loop_strips[-1]
-            shared_verts = sum(1 if e0.share_vert(e1) else 0 for e0 in s0 for e1 in s1)
-            if len(loop_strips) == 2 and shared_verts != 2: continue
-            if len(loop_strips) > 2 and shared_verts != 1: continue
-            loops_strips.append(loop_strips)
-            if len(loop_strips) == 2:
-                self.shapes['eye'].append(loop_strips)
-            elif len(loop_strips) == 3:
-                self.shapes['tri'].append(loop_strips)
-            elif len(loop_strips) == 4:
-                self.shapes['rect'].append(loop_strips)
-            else:
-                self.shapes['ngon'].append(loop_strips)
-
-        self.shapes['corners'] = (string_corners | loop_corners)
-
-        ###################
-        # generate previz
-
-        def get_verts(strip, rev=False):
-            if len(strip) == 1: return list(strip[0].verts)
-            bmvs = [strip[0].nonshared_vert(strip[1])]
-            bmvs += [e0.shared_vert(e1) for e0,e1 in zip(strip[:-1], strip[1:])]
-            bmvs += [strip[-1].nonshared_vert(strip[-2])]
-            if rev: bmvs.reverse()
-            return bmvs
-
-        # rect
-        for shape in self.shapes['rect']:
-            s0,s1,s2,s3 = shape
-            if len(s0) != len(s2) or len(s1) != len(s3): continue   # invalid rect
-            sv0,sv1,sv2,sv3 = get_verts(s0),get_verts(s1),get_verts(s2,True),get_verts(s3,True)
-            l0,l1 = len(sv0),len(sv1)
-
-            # make sure each strip is in the correct order
-            if sv0[-1] not in sv1: sv0.reverse()
-            if sv1[-1] not in sv2: sv1.reverse()
-            if sv2[-1] not in sv1: sv2.reverse()
-            if sv3[-1] not in sv2: sv3.reverse()
-
-            verts,edges,faces = [],[],[]
-            for i in range(l0):
-                l,r = sv0[i],sv2[i]
-                for j in range(l1):
-                    t,b = sv1[j],sv3[j]
-                    if   i == 0:    verts += [b]
-                    elif i == l0-1: verts += [t]
-                    elif j == 0:    verts += [l]
-                    elif j == l1-1: verts += [r]
-                    else:
-                        pi,pj = i / (l0-1), j / (l1-1)
-                        lr = Vec(l.co)*(1-pj) + Vec(r.co)*pj
-                        tb = Vec(b.co)*(1-pi) + Vec(t.co)*pi
-                        verts += [nearest_sources_Point((lr+tb)/2.0)]
-            edges += [(i*l1+(j+0), i*l1+(j+1)) for i in range(1,l0-1) for j in range(l1-1)]
-            edges += [((i+0)*l1+j, (i+1)*l1+j) for j in range(1,l1-1) for i in range(l0-1)]
-            faces += [( (i+0)*l1+(j+0), (i+1)*l1+(j+0), (i+1)*l1+(j+1), (i+0)*l1+(j+1) ) for i in range(l0-1) for j in range(l1-1)]
-
-            self.previz += [{ 'type': 'rect', 'data': shape, 'verts': verts, 'edges': edges, 'faces': faces }]
-
-        for shape in self.shapes['L']:
-            s0,s1 = shape
-            sv0,sv1 = get_verts(s0),get_verts(s1)
-            l0,l1 = len(sv0),len(sv1)
-
-            # make sure each strip is in the correct order
-            if sv0[-1] not in sv1: sv0.reverse()
-            if sv1[0] not in sv0: sv1.reverse()
-
-            symmetry0 = self.rfcontext.get_point_symmetry(sv0[0].co)
-            symmetry1 = self.rfcontext.get_point_symmetry(sv1[-1].co)
-            if symmetry0 and symmetry1:
-                # both are at symmetry... artist is trying to fill a triangle
-                # we cannot do that, yet, so bail!
-                continue
-
-            off0,off1 = sv0[-1].co-sv0[0].co, sv1[-1].co-sv1[0].co
-
-            verts,edges,faces = [],[],[]
-            for i in range(l0):
-                for j in range(l1):
-                    if   i == l0-1: verts += [sv1[j]]
-                    elif j == 0:    verts += [sv0[i]]
-                    else:
-                        l,r = sv0[i].co,sv0[i].co+off1
-                        t,b = sv1[j].co,sv1[j].co-off0
-                        pi,pj = i / (l0-1), j / (l1-1)
-                        lr = Vec(l)*(1-pj) + Vec(r)*pj
-                        tb = Vec(b)*(1-pi) + Vec(t)*pi
-                        point = nearest_sources_Point((lr+tb)/2.0)
-                        if i == 0: point = self.rfcontext.snap_to_symmetry(point, symmetry0)
-                        if j == l1-1: point = self.rfcontext.snap_to_symmetry(point, symmetry1)
-                        verts += [point]
-            edges += [(i*l1+(j+0), i*l1+(j+1)) for i in range(l0-1) for j in range(l1-1)]
-            edges += [((i+0)*l1+j, (i+1)*l1+j) for j in range(1,l1) for i in range(l0-1)]
-            faces += [( (i+0)*l1+(j+0), (i+1)*l1+(j+0), (i+1)*l1+(j+1), (i+0)*l1+(j+1) ) for i in range(l0-1) for j in range(l1-1)]
-
-            self.previz += [{ 'type': 'L', 'data': shape, 'verts': verts, 'edges': edges, 'faces': faces }]
-
-        for shape in self.shapes['C']:
-            s0,s1,s2 = shape
-            if len(s0) != len(s2): continue     # invalid C-shape
-            sv0,sv1,sv2 = get_verts(s0),get_verts(s1),get_verts(s2,True)
-            l0,l1 = len(sv0),len(sv1)
-
-            # make sure each strip is in the correct order
-            if sv0[-1] not in sv1: sv0.reverse()
-            if sv1[-1] not in sv2: sv1.reverse()
-            if sv2[-1] not in sv1: sv2.reverse()
-
-            symmetry0 = self.rfcontext.get_point_symmetry(sv0[0].co)
-            symmetry2 = self.rfcontext.get_point_symmetry(sv2[0].co)
-            use_symmetry = (symmetry0 == symmetry2)
-            #print([v.co for v in sv0])
-            #print([v.co for v in sv2])
-            #print(symmetry0, symmetry2, use_symmetry)
-
-            off0,off2 = sv0[0].co-sv0[-1].co, sv2[0].co-sv2[-1].co
-
-            verts,edges,faces = [],[],[]
-            for i in range(l0):
-                for j in range(l1):
-                    if   i == l0-1: verts += [sv1[j]]
-                    elif j == 0:    verts += [sv0[i]]
-                    elif j == l1-1: verts += [sv2[i]]
-                    else:
-                        pi,pj = i / (l0-1), j / (l1-1)
-                        off = off0*(1-pj)+off2*pj
-                        l,r = sv0[i].co,sv2[i].co
-                        t,b = sv1[j].co,sv1[j].co+off
-                        lr = Vec(l)*(1-pj) + Vec(r)*pj
-                        tb = Vec(b)*(1-pi) + Vec(t)*pi
-                        point = nearest_sources_Point((lr+tb)/2.0)
-                        if use_symmetry and i == 0: point = self.rfcontext.snap_to_symmetry(point, symmetry0)
-                        verts += [point]
-            edges += [(i*l1+(j+0), i*l1+(j+1)) for i in range(l0-1) for j in range(l1-1)]
-            edges += [((i+0)*l1+j, (i+1)*l1+j) for j in range(1,l1-1) for i in range(l0-1)]
-            faces += [( (i+0)*l1+(j+0), (i+1)*l1+(j+0), (i+1)*l1+(j+1), (i+0)*l1+(j+1) ) for i in range(l0-1) for j in range(l1-1)]
-
-            self.previz += [{ 'type': 'C', 'data': shape, 'verts': verts, 'edges': edges, 'faces': faces }]
-
-        # TODO: check sides to make sure that we aren't creating geometry
-        #       on a side that already has geometry!
-        for i0,shape0 in enumerate(self.shapes['I']):
-            sv0 = get_verts(shape0[0])
-            dir0 = Direction(sv0[0].co-sv0[-1].co)
-            best_sv1,best_dist = None,0
-            for i1,shape1 in enumerate(self.shapes['I']):
-                if i1 <= i0: continue
-                sv1 = get_verts(shape1[0])
-                dir1 = Direction(sv1[0].co-sv1[-1].co)
-                if len(sv0) != len(sv1): continue
-                if dir0.dot(dir1) < 0:
-                    sv1 = list(reversed(sv1))
-                    dir1.reverse()
-                # make sure the I strip are good candidates for bridging
-                # if math.degrees(dir0.angleBetween(dir1)) > 80: continue     # make sure strips are parallel enough
-                if math.degrees(dir0.angleBetween(Direction(sv1[0].co-sv0[0].co))) < 45: continue
-                if math.degrees(dir1.angleBetween(Direction(sv0[0].co-sv1[0].co))) < 45: continue
-                dist = min((v0.co-v1.co).length for v0 in sv0 for v1 in sv1)
-                if best_sv1 and best_dist < dist: continue
-                best_sv1 = sv1
-                best_dist = dist
-            if not best_sv1: continue
-            sv1,dist = best_sv1,best_dist
-            avg0 = (sv0[0].co-sv0[-1].co).length / (len(sv0)-1)
-            avg1 = (sv1[0].co-sv1[-1].co).length / (len(sv1)-1)
-
-            l0 = len(sv0)
-            if getattr(self, 'crosses', None) is None:
-                self.crosses = max(2, math.floor(dist / max(avg0,avg1)))
-            l1 = self.crosses
-
-            verts,edges,faces = [],[],[]
-            for i in range(l0):
-                for j in range(l1):
-                    if   j == 0:    verts += [sv0[i]]
-                    elif j == l1-1: verts += [sv1[i]]
-                    else:
-                        pi,pj = i / (l0-1), j / (l1-1)
-                        l,r = sv0[i].co,sv1[i].co
-                        lr = Vec(l)*(1-pj) + Vec(r)*pj
-                        verts += [nearest_sources_Point(lr)]
-            edges += [(i*l1+(j+0), i*l1+(j+1)) for i in range(l0) for j in range(l1-1)]
-            edges += [((i+0)*l1+j, (i+1)*l1+j) for j in range(1,l1-1) for i in range(l0-1)]
-            faces += [( (i+0)*l1+(j+0), (i+1)*l1+(j+0), (i+1)*l1+(j+1), (i+0)*l1+(j+1) ) for i in range(l0-1) for j in range(l1-1)]
-
-            self.previz += [{ 'type': 'I', 'data': shape0, 'verts': verts, 'edges': edges, 'faces': faces }]
-
-
-        if False:
-            print('')
-            print('patches info:')
-            print('  %d edges' % len(edges))
-            print('  %d strips' % len(strips))
-            print('  %d corners' % len(corners))
-            print('  %d string corners' % len(string_corners))
-            print('  %d loop corners' % len(loop_corners))
-            print('  %d strings' % len(strings_strips))
-            print('  %d loops' % len(loops_strips))
-            for d,k in [('loop','O'),('loop','eye'),('loop','tri'),('loop','rect'),('loop','ngon'),('string','I'),('string','L'),('string','C'),('string','else')]:
-                print('  %d %s-shaped %s' % (len(self.shapes[k]), k, d))
-
-        tag_redraw_all('Patches recompute')
-        self.update_ui()
