@@ -28,6 +28,59 @@ from ...addon_common.common.maths  import Point,Point2D,Vec2D,Vec, Normal, clamp
 from ...addon_common.common.bezier import CubicBezierSpline, CubicBezier
 from ...addon_common.common.utils  import iter_pairs
 import collections
+import requests
+
+class ExpandedPattern:
+    def __init__(self, faces: list[list[int, int, int, int]], verts: list[tuple[float, float, float]], sides: list[list[int]]):
+        self.faces = faces
+        self.verts = verts
+        self.sides = sides
+        self.drawn_verts = []
+        self.drawn_edges = []
+        self.drawn_faces = []
+    
+    def draw(self, rfcontext, patch: 'AutofillPatch'):
+        assert not self.drawn_verts and not self.drawn_edges and not self.drawn_faces
+
+        for i in range(len(self.verts)):
+            for j in range(len(self.sides)):
+                for k in range(len(self.sides[j])):
+                    if i == self.sides[j][k]:
+                        self.drawn_verts.append(patch.sides[j][k])
+                        break
+                else:
+                    continue
+                break
+            else:
+                self.drawn_verts.append(rfcontext.new_vert_point(Point(self.verts[i])))
+        for face in self.faces:
+            for i in range(4):
+                try: # to handle duplicates lol
+                    self.drawn_edges.append(rfcontext.new_edge([self.drawn_verts[face[i]], self.drawn_verts[face[(i + 1) % 4]]]))
+                except:
+                    pass
+        self.drawn_faces = [rfcontext.new_face([self.drawn_verts[i] for i in face]) for face in self.faces]
+
+    def destroy(self, rfcontext):
+        for i in range(len(self.verts)):
+            for j in range(len(self.sides)):
+                for k in range(len(self.sides[j])):
+                    if i == self.sides[j][k]:
+                        break
+                else:
+                    continue
+                break
+            else:
+                rfcontext.delete_verts(self.drawn_verts[i])
+        rfcontext.delete_edges(self.drawn_edges)
+        rfcontext.delete_faces(self.drawn_faces)
+        self.drawn_verts = []
+        self.drawn_edges = []
+        self.drawn_faces = []
+
+    @staticmethod
+    def none():
+        return ExpandedPattern([], [], [])
 
 class Side:
     def __init__(self, edges):
@@ -46,11 +99,67 @@ class Side:
         return -1
 
 class AutofillPatch:
-    def __init__(self, sides):
-        self.sides = sides
+    def __init__(self, sides: list[Side]):
+        '''
+        takes a list of Side objects, not necessarily in CCW order.
+        '''
+        def order_sides(sides):
+            '''
+            returns a list of lists of vertices in each side, including endpoints, in CCW order
+            '''
+            s: list[list] = [] # list of lists of vertices in each side, including endpoints, not necessarily in CCW order
+            for side in sides:
+                s.append([edge.verts[0] for edge in side.edges] + [side.edges[-1].verts[1]])
+
+            ordered_sides: list[list] = [] 
+            curr = s[0] # assumes first side is already CCW--change later
+            s.remove(curr)
+            while True:
+                ordered_sides.append(curr)
+                for i in range(len(s)):
+                    if curr[-1] == s[i][0]:
+                        curr = s[i]
+                        s.remove(curr)
+                        break
+                    elif curr[-1] == s[i][-1]:
+                        curr = s[i][::-1]
+                        s.remove(s[i])
+                        break
+                else:
+                    assert False # should never happen
+                if curr[-1] == ordered_sides[0][0]:
+                    ordered_sides.append(curr)
+                    break
+            return ordered_sides
+
+        self.sides = order_sides(sides)
+        self.expanded_patterns = [ExpandedPattern.none()] 
+        self.i = 0
+       
+        # call backend to get the expanded patterns
+        r = requests.post("http://127.0.0.1:5000/get_expanded_patterns", json=self.to_json())
+        data = r.json()
+        self.expanded_patterns.append(ExpandedPattern(data['faces'], data['verts'], data['sides']))
+
+    def next(self, rfcontext):
+        self.expanded_patterns[self.i].destroy(rfcontext)
+        self.i = (self.i + 1) % len(self.expanded_patterns)
+        self.expanded_patterns[self.i].draw(rfcontext, self)
+
+    def prev(self, rfcontext):
+        self.expanded_patterns[self.i].destroy(rfcontext)
+        self.i = (self.i - 1) % len(self.expanded_patterns)
+        self.expanded_patterns[self.i].draw(rfcontext, self)
+
+    def to_json(self):
+        sides = []
+        for side in self.sides:
+            sides.append([(v.co.x, v.co.y, v.co.z) for v in side])
+        return sides
 
 class AutofillPatches:
-    def __init__(self):
+    def __init__(self, rfcontext):
+        self.rfcontext = rfcontext
         self.sides = []
         self.patches = []
 
@@ -61,6 +170,7 @@ class AutofillPatches:
         start, end = side.get_endpoints()
         if any(start in s.get_endpoints() for s in self.sides if s != side) and any(end in s.get_endpoints() for s in self.sides if s != side):
             self.patches.append(self.get_patch(side))
+            self.patches[-1].next(self.rfcontext)
 
     def add_intersections(self, side):
         def add_intersection_if_exists(s, vert):

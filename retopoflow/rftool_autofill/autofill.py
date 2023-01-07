@@ -112,7 +112,7 @@ class Autofill(RFTool):
         self.rfwidget = None
         self.strip_crosses = None
         self.strip_loops = None
-        self.patches = AutofillPatches()
+        self.patches = AutofillPatches(self.rfcontext)
         self._var_fixed_span_count = BoundInt('''options['strokes span count']''', min_value=1, max_value=128)
         self._var_cross_count = BoundInt('''self.cross_count''', min_value=1, max_value=500)
         self._var_loop_count  = BoundInt('''self.loop_count''', min_value=1, max_value=500)
@@ -476,14 +476,7 @@ class Autofill(RFTool):
                 self.rfcontext.clean_duplicate_bmedges(verts[-1])
 
             self.patches.add_side(Side(edges))
-            # for visual testing
-            if self.patches.patches:
-                e = []
-                for side in self.patches.patches[-1].sides:
-                    e += side.edges
-                self.rfcontext.select(e) 
-
-            #self.rfcontext.select(edges)
+            self.rfcontext.select(edges)
             self.just_created = True
 
     def mergeSnapped(self):
