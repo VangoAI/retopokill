@@ -475,10 +475,10 @@ class Autofill(RFTool):
                 verts[-1].co = co
                 self.rfcontext.clean_duplicate_bmedges(verts[-1])
 
-            self.patches.add_side(Side(edges))
             self.rfcontext.select(edges)
+            self.patches.add_side(Side(edges))
             self.just_created = True
-
+            
     def mergeSnapped(self):
         """ Merging colocated visible verts """
 

@@ -35,12 +35,11 @@ class ExpandedPattern:
         self.faces = faces
         self.verts = verts
         self.sides = sides
-        self.drawn_verts = []
-        self.drawn_edges = []
+        self.drawn_verts = [] # no need to keep track of edges
         self.drawn_faces = []
     
     def draw(self, rfcontext, patch: 'AutofillPatch'):
-        assert not self.drawn_verts and not self.drawn_edges and not self.drawn_faces
+        assert not self.drawn_verts and not self.drawn_faces
 
         for i in range(len(self.verts)):
             for j in range(len(self.sides)):
@@ -53,12 +52,6 @@ class ExpandedPattern:
                 break
             else:
                 self.drawn_verts.append(rfcontext.new_vert_point(Point(self.verts[i])))
-        for face in self.faces:
-            for i in range(4):
-                try: # to handle duplicates lol
-                    self.drawn_edges.append(rfcontext.new_edge([self.drawn_verts[face[i]], self.drawn_verts[face[(i + 1) % 4]]]))
-                except:
-                    pass
         self.drawn_faces = [rfcontext.new_face([self.drawn_verts[i] for i in face]) for face in self.faces]
 
     def destroy(self, rfcontext):
@@ -71,12 +64,12 @@ class ExpandedPattern:
                     continue
                 break
             else:
-                rfcontext.delete_verts(self.drawn_verts[i])
-        rfcontext.delete_edges(self.drawn_edges)
-        rfcontext.delete_faces(self.drawn_faces)
+                rfcontext.delete_verts([self.drawn_verts[i]]) # deletes the faces too
         self.drawn_verts = []
-        self.drawn_edges = []
         self.drawn_faces = []
+
+    def select(self, rfcontext):
+        rfcontext.select(self.drawn_faces)
 
     @staticmethod
     def none():
@@ -145,11 +138,15 @@ class AutofillPatch:
         self.expanded_patterns[self.i].destroy(rfcontext)
         self.i = (self.i + 1) % len(self.expanded_patterns)
         self.expanded_patterns[self.i].draw(rfcontext, self)
+        self.select(rfcontext)
 
     def prev(self, rfcontext):
         self.expanded_patterns[self.i].destroy(rfcontext)
         self.i = (self.i - 1) % len(self.expanded_patterns)
         self.expanded_patterns[self.i].draw(rfcontext, self)
+
+    def select(self, rfcontext):
+        self.expanded_patterns[self.i].select(rfcontext)
 
     def to_json(self):
         sides = []
@@ -162,6 +159,7 @@ class AutofillPatches:
         self.rfcontext = rfcontext
         self.sides = []
         self.patches = []
+        self.selected_patch_index = -1
 
     def add_side(self, side):
         self.sides.append(side)
