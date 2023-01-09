@@ -275,19 +275,9 @@ class Autofill(RFTool):
 
         if self.actions.pressed({'select single', 'select single add'}, unpress=False):
             print("click")
-            sel_only = self.actions.pressed('select single')
-            self.actions.unpress()
-            bmf,_ = self.rfcontext.accel_nearest2D_face(max_dist=options['select dist'])
-            sel = self.hovering_edge or bmf
-            print(sel)
-            if not sel_only and not sel: return
-            self.rfcontext.undo_push('select')
-            if sel_only: self.rfcontext.deselect_all()
-            if not sel: return
-            if sel.select: self.rfcontext.deselect(sel)
-            else:                         self.rfcontext.select(sel, supparts=False, only=sel_only)
+            face = self.rfcontext.accel_nearest2D_face(max_dist=options['select dist'])
+            self.patches.select_patch(face[0])
             return
-
 
         if self.rfcontext.actions.pressed({'select smart', 'select smart add'}, unpress=False):
             sel_only = self.rfcontext.actions.pressed('select smart')

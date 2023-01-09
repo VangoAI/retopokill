@@ -71,6 +71,9 @@ class ExpandedPattern:
     def select(self, rfcontext):
         rfcontext.select(self.drawn_faces)
 
+    def contains(self, face):
+        return face in self.drawn_faces
+
     @staticmethod
     def none():
         return ExpandedPattern([], [], [])
@@ -148,6 +151,9 @@ class AutofillPatch:
     def select(self, rfcontext):
         self.expanded_patterns[self.i].select(rfcontext)
 
+    def contains(self, face):
+        return self.expanded_patterns[self.i].contains(face)
+
     def to_json(self):
         sides = []
         for side in self.sides:
@@ -169,6 +175,7 @@ class AutofillPatches:
         if any(start in s.get_endpoints() for s in self.sides if s != side) and any(end in s.get_endpoints() for s in self.sides if s != side):
             self.patches.append(self.get_patch(side))
             self.patches[-1].next(self.rfcontext)
+            self.selected_patch_index = len(self.patches) - 1
 
     def add_intersections(self, side):
         def add_intersection_if_exists(s, vert):
@@ -205,6 +212,19 @@ class AutofillPatches:
                         return AutofillPatch(patch_sides)
                     queue.append(sides + [(s, s_endpoint)])
         assert False, 'should have found a patch, but did not'
+
+    def select_patch(self, face):
+        '''
+        select the patch containing the face
+        '''
+        for i, patch in enumerate(self.patches):
+            if patch.contains(face):
+                print("CONTAINS", i)
+                patch.select(self.rfcontext)
+                self.selected_patch_index = i
+                return
+        self.rfcontext.deselect_all()
+        self.selected_patch_index = -1
 
 def process_stroke_filter(stroke, min_distance=1.0, max_distance=2.0):
     ''' filter stroke to pts that are at least min_distance apart '''
