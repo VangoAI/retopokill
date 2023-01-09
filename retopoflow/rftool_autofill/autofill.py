@@ -274,9 +274,14 @@ class Autofill(RFTool):
             )
 
         if self.actions.pressed({'select single', 'select single add'}, unpress=False):
-            print("click")
+            selectable_edges = [e for e in self.rfcontext.visible_edges() if len(e.link_faces) < 2]
+            edge,_ = self.rfcontext.nearest2D_edge(edges=selectable_edges, max_dist=10)
+            if edge:
+                self.rfcontext.select(edge)
+                return
             face = self.rfcontext.accel_nearest2D_face(max_dist=options['select dist'])
-            self.patches.select_patch(face[0])
+            if face:
+                self.patches.select_patch(face[0])
             return
 
         if self.rfcontext.actions.pressed({'select smart', 'select smart add'}, unpress=False):
@@ -313,6 +318,25 @@ class Autofill(RFTool):
             elif self.strip_loops is not None and self.strip_loops > 1:
                 self.strip_loops -= 1
                 self.replay()
+
+        
+        if self.rfcontext.actions.pressed('next'):
+            self.next_autofill()
+            return
+        
+        if self.rfcontext.actions.pressed('previous'):
+            self.prev_autofill()
+            return
+
+    @RFTool.dirty_when_done
+    def next_autofill(self):
+        if self.patches.is_patch_selected():
+            self.patches.next()
+
+    @RFTool.dirty_when_done
+    def prev_autofill(self):
+        if self.patches.is_patch_selected():
+            self.patches.prev()
 
     @RFWidget.on_actioning('Autofill stroke')
     def stroking(self):
@@ -455,16 +479,11 @@ class Autofill(RFTool):
             edges = [self.rfcontext.new_edge([v0, v1]) for (v0, v1) in iter_pairs(verts, wrap=False)]
 
             if snap0:
-                co = snap0.co
-                verts[0].merge(snap0)
-                verts[0].co = co
-                self.rfcontext.clean_duplicate_bmedges(verts[0])
+                snap0.merge(verts[0])
+                verts[0] = snap0
             if snap1:
-                co = snap1.co
-                verts[-1].merge(snap1)
-                verts[-1].co = co
-                self.rfcontext.clean_duplicate_bmedges(verts[-1])
-
+                snap1.merge(verts[-1])
+                verts[-1] = snap1
             self.rfcontext.select(edges)
             self.patches.add_side(Side(edges))
             self.just_created = True

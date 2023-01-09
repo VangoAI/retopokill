@@ -138,15 +138,16 @@ class AutofillPatch:
         self.expanded_patterns.append(ExpandedPattern(data['faces'], data['verts'], data['sides']))
 
     def next(self, rfcontext):
-        self.expanded_patterns[self.i].destroy(rfcontext)
-        self.i = (self.i + 1) % len(self.expanded_patterns)
-        self.expanded_patterns[self.i].draw(rfcontext, self)
-        self.select(rfcontext)
+        self.change(rfcontext, 1)
 
     def prev(self, rfcontext):
+        self.change(rfcontext, -1)
+
+    def change(self, rfcontext, x):
         self.expanded_patterns[self.i].destroy(rfcontext)
-        self.i = (self.i - 1) % len(self.expanded_patterns)
+        self.i = (self.i + x) % len(self.expanded_patterns)
         self.expanded_patterns[self.i].draw(rfcontext, self)
+        self.select(rfcontext)
 
     def select(self, rfcontext):
         self.expanded_patterns[self.i].select(rfcontext)
@@ -219,12 +220,28 @@ class AutofillPatches:
         '''
         for i, patch in enumerate(self.patches):
             if patch.contains(face):
-                print("CONTAINS", i)
-                patch.select(self.rfcontext)
-                self.selected_patch_index = i
+                if self.selected_patch_index == i:
+                    self.deselect()
+                else:
+                    patch.select(self.rfcontext)
+                    self.selected_patch_index = i
                 return
+        self.deselect()
+
+    def deselect(self):
         self.rfcontext.deselect_all()
         self.selected_patch_index = -1
+
+    def is_patch_selected(self):
+        return self.selected_patch_index != -1
+
+    def next(self):
+        assert self.is_patch_selected()
+        self.patches[self.selected_patch_index].next(self.rfcontext)
+
+    def prev(self):
+        assert self.is_patch_selected()
+        self.patches[self.selected_patch_index].prev(self.rfcontext)
 
 def process_stroke_filter(stroke, min_distance=1.0, max_distance=2.0):
     ''' filter stroke to pts that are at least min_distance apart '''
