@@ -55,6 +55,8 @@ class ExpandedPattern:
         self.drawn_faces = [rfcontext.new_face([self.drawn_verts[i] for i in face]) for face in self.faces]
 
     def destroy(self, rfcontext):
+        if not self.drawn_verts and not self.drawn_faces:
+            return
         for i in range(len(self.verts)):
             for j in range(len(self.sides)):
                 for k in range(len(self.sides[j])):
@@ -71,7 +73,7 @@ class ExpandedPattern:
     def select(self, rfcontext):
         rfcontext.select(self.drawn_faces)
 
-    def contains(self, face):
+    def contains_face(self, face):
         return face in self.drawn_faces
 
     @staticmethod
@@ -129,13 +131,14 @@ class AutofillPatch:
             return ordered_sides
 
         self.sides = order_sides(sides)
-        self.expanded_patterns = [ExpandedPattern.none()] 
-        self.i = 0
+        self.expanded_patterns = [] 
+        self.i = -1
        
         # call backend to get the expanded patterns
         r = requests.post("http://127.0.0.1:5000/get_expanded_patterns", json=self.to_json())
         data = r.json()
-        self.expanded_patterns.append(ExpandedPattern(data['faces'], data['verts'], data['sides']))
+        for p in data:
+            self.expanded_patterns.append(ExpandedPattern(p['faces'], p['verts'], p['sides']))
 
     def next(self, rfcontext):
         self.change(rfcontext, 1)
@@ -145,15 +148,15 @@ class AutofillPatch:
 
     def change(self, rfcontext, x):
         self.expanded_patterns[self.i].destroy(rfcontext)
-        self.i = (self.i + x) % len(self.expanded_patterns)
+        self.i = min(max(0, self.i + x), len(self.expanded_patterns) - 1)
         self.expanded_patterns[self.i].draw(rfcontext, self)
         self.select(rfcontext)
 
     def select(self, rfcontext):
         self.expanded_patterns[self.i].select(rfcontext)
 
-    def contains(self, face):
-        return self.expanded_patterns[self.i].contains(face)
+    def contains_face(self, face):
+        return self.expanded_patterns[self.i].contains_face(face)
 
     def to_json(self):
         sides = []
@@ -214,12 +217,12 @@ class AutofillPatches:
                     queue.append(sides + [(s, s_endpoint)])
         assert False, 'should have found a patch, but did not'
 
-    def select_patch(self, face):
+    def select_patch_from_face(self, face):
         '''
         select the patch containing the face
         '''
         for i, patch in enumerate(self.patches):
-            if patch.contains(face):
+            if patch.contains_face(face):
                 if self.selected_patch_index == i:
                     self.deselect()
                 else:
