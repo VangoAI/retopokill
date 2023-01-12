@@ -336,6 +336,7 @@ keymap_details = [
         ('smooth edge flow', 'Smooth edge flow of selected geometry'),
         ('next', 'Autofill: get next autofill'),
         ('previous', 'Autofill: get previous autofill'),
+        ('add', 'Autofill: add side from select edges'),
         ('rotate plane', 'Contours: rotate plane'),
         ('rotate screen', 'Contours: rotate screen'),
         ('slide', 'Loops: slide loop'),

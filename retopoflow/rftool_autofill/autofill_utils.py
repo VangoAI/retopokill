@@ -45,7 +45,7 @@ class ExpandedPattern:
             for j in range(len(self.sides)):
                 for k in range(len(self.sides[j])):
                     if i == self.sides[j][k]:
-                        self.drawn_verts.append(patch.sides[j][k])
+                        self.drawn_verts.append(patch.sides[j].verts[k])
                         break
                 else:
                     continue
@@ -81,64 +81,62 @@ class ExpandedPattern:
         return ExpandedPattern([], [], [])
 
 class Side:
-    def __init__(self, edges):
-        self.edges = edges
-
-    def get_endpoints(self):
-        return self.edges[0].verts[0], self.edges[-1].verts[1]
-
-    def index(self, vert):
+    def __init__(self, edges: list):
         '''
-        return index of the edge that BEGINS with the vert else -1
+        takes in a list of edges that make up a side
+        turns them into a list of the vertices that make up the side, including endpoints
         '''
-        for i, edge in enumerate(self.edges):
-            if edge.verts[0] == vert:
-                return i
-        return -1
+        self.verts = [edge.verts[0] for edge in edges] + [edges[-1].verts[1]]
+
+    def shares_endpoint_with(self, other):
+        return self.verts[0] == other.verts[0] or self.verts[0] == other.verts[-1] or self.verts[-1] == other.verts[0] or self.verts[-1] == other.verts[-1]
+
+    def merge(self, other):
+        if self.verts[0] == other.verts[0]:
+            self.verts = other.verts[::-1] + self.verts[1:]
+        elif self.verts[0] == other.verts[-1]:
+            self.verts = other.verts + self.verts[1:]
+        elif self.verts[-1] == other.verts[0]:
+            self.verts = self.verts[:-1] + other.verts
+        elif self.verts[-1] == other.verts[-1]:
+            self.verts = self.verts[:-1] + other.verts[::-1]
+        else:
+            assert False, 'sides do not share an endpoint'
 
 class AutofillPatch:
     def __init__(self, sides: list[Side]):
         '''
         takes a list of Side objects, not necessarily in CCW order.
         '''
-        def order_sides(sides):
+        def order_sides(sides: list[Side]) -> list[Side]:
             '''
-            returns a list of lists of vertices in each side, including endpoints, in CCW order
+            orders the sides in CCW order
             '''
-            s: list[list] = [] # list of lists of vertices in each side, including endpoints, not necessarily in CCW order
-            for side in sides:
-                s.append([edge.verts[0] for edge in side.edges] + [side.edges[-1].verts[1]])
-
-            ordered_sides: list[list] = [] 
-            curr = s[0] # assumes first side is already CCW--change later
-            s.remove(curr)
+            ordered_sides = []
+            curr = sides[0] # assumes first side is already CCW--change later
+            sides.remove(curr)
             while True:
                 ordered_sides.append(curr)
-                for i in range(len(s)):
-                    if curr[-1] == s[i][0]:
-                        curr = s[i]
-                        s.remove(curr)
+                for i in range(len(sides)):
+                    if curr.verts[-1] == sides[i].verts[0]:
+                        curr = sides[i]
+                        sides.remove(curr)
                         break
-                    elif curr[-1] == s[i][-1]:
-                        curr = s[i][::-1]
-                        s.remove(s[i])
+                    elif curr.verts[-1] == sides[i].verts[-1]:
+                        curr = sides[i]
+                        curr.verts = curr.verts[::-1]
+                        sides.remove(curr)
                         break
                 else:
                     assert False # should never happen
-                if curr[-1] == ordered_sides[0][0]:
+                if curr.verts[-1] == ordered_sides[0].verts[0]:
                     ordered_sides.append(curr)
                     break
             return ordered_sides
 
         self.sides = order_sides(sides)
-        self.expanded_patterns = [] 
+        self.load()
         self.i = -1
-       
-        # call backend to get the expanded patterns
-        r = requests.post("http://127.0.0.1:5000/get_expanded_patterns", json=self.to_json())
-        data = r.json()
-        for p in data:
-            self.expanded_patterns.append(ExpandedPattern(p['faces'], p['verts'], p['sides']))
 
     def next(self, rfcontext):
         self.change(rfcontext, 1)
@@ -158,64 +156,38 @@ class AutofillPatch:
     def contains_face(self, face):
         return self.expanded_patterns[self.i].contains_face(face)
 
-    def to_json(self):
-        sides = []
-        for side in self.sides:
-            sides.append([(v.co.x, v.co.y, v.co.z) for v in side])
-        return sides
+    def load(self):
+        '''
+        loads the expanded patterns
+        '''
+        def to_json() -> list[list[tuple[float, float, float]]]:
+            sides = []
+            for side in self.sides:
+                sides.append([(v.co.x, v.co.y, v.co.z) for v in side.verts])
+            return sides
+
+        r = requests.post("http://127.0.0.1:5000/get_expanded_patterns", json=to_json())
+        self.expanded_patterns = [ExpandedPattern(p['faces'], p['verts'], p['sides']) for p in r.json()]
 
 class AutofillPatches:
     def __init__(self, rfcontext):
         self.rfcontext = rfcontext
-        self.sides = []
         self.patches = []
         self.selected_patch_index = -1
+        self.current_sides = []
 
     def add_side(self, side):
-        self.sides.append(side)
-        self.add_intersections(side)
-
-        start, end = side.get_endpoints()
-        if any(start in s.get_endpoints() for s in self.sides if s != side) and any(end in s.get_endpoints() for s in self.sides if s != side):
-            self.patches.append(self.get_patch(side))
+        self.current_sides.append(side)
+        if len(self.current_sides) == 4:
+            patch = AutofillPatch(self.current_sides)
+            self.current_sides = []
+            self.patches.append(patch)
             self.patches[-1].next(self.rfcontext)
             self.selected_patch_index = len(self.patches) - 1
 
-    def add_intersections(self, side):
-        def add_intersection_if_exists(s, vert):
-            i = s.index(vert)
-            if i > 0:
-                s1, s2 = Side(s.edges[:i]), Side(s.edges[i:])
-                self.sides.append(s1)
-                self.sides.append(s2)
-
-        start, end = side.get_endpoints()
-        for s in self.sides:
-            add_intersection_if_exists(s, start)
-            add_intersection_if_exists(s, end)
-        
-    def get_patch(self, side):
-        '''
-        Create a patch starting from side, using bfs to find the rest of the sides
-        '''
-        queue = collections.deque()
-        queue.append([(side, side.get_endpoints()[1])])
-        while queue:
-            sides = queue.popleft()
-            prev_side, prev_endpoint = sides[-1]
-            for s in self.sides:
-                if s not in [s for s, _ in sides]:
-                    if s.get_endpoints()[0] == prev_endpoint:
-                        s_endpoint = s.get_endpoints()[1]
-                    elif s.get_endpoints()[1] == prev_endpoint:
-                        s_endpoint = s.get_endpoints()[0]
-                    else:
-                        continue
-                    if s_endpoint == sides[0][0].get_endpoints()[0]:
-                        patch_sides = [s for s, _ in sides] + [s]
-                        return AutofillPatch(patch_sides)
-                    queue.append(sides + [(s, s_endpoint)])
-        assert False, 'should have found a patch, but did not'
+    def replace_side(self, side):
+        for patch in self.patches:
+            patch.replace_side(side)
 
     def select_patch_from_face(self, face):
         '''

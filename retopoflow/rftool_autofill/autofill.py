@@ -274,15 +274,19 @@ class Autofill(RFTool):
             )
 
         if self.actions.pressed({'select single', 'select single add'}, unpress=False):
+            sel_only = self.actions.pressed('select single')
             selectable_edges = [e for e in self.rfcontext.visible_edges() if len(e.link_faces) < 2]
             edge,_ = self.rfcontext.nearest2D_edge(edges=selectable_edges, max_dist=10)
             if edge:
-                self.patches.deselect()
-                self.rfcontext.select(edge)
+                if sel_only:
+                    self.patches.deselect()
+                self.rfcontext.select(edge, supparts=False, only=sel_only)
                 return
             face = self.rfcontext.accel_nearest2D_face(max_dist=options['select dist'])
             if face:
                 self.patches.select_patch_from_face(face[0])
+                return
+            self.patches.deselect()
             return
 
         if self.rfcontext.actions.pressed({'select smart', 'select smart add'}, unpress=False):
@@ -295,7 +299,23 @@ class Autofill(RFTool):
             if edge:
                 self.rfcontext.select_edge_loop(edge, supparts=False, only=sel_only)
             return
-            
+
+        if self.rfcontext.actions.pressed('add'):
+            edges: set = self.rfcontext.get_selected_edges()
+            if not edges:
+                return
+            # build a side with ordered edges
+            sides = [Side([edge]) for edge in edges]
+            while len(sides) > 1:
+                side = sides.pop()
+                for other in sides:
+                    if other.shares_endpoint_with(side):
+                        other.merge(side)
+                        break
+                else:
+                    assert False, 'edges not connected'
+            self.patches.add_side(sides[0])
+            return
 
         if self.rfcontext.actions.pressed('grab'):
             self.move_done_pressed = 'confirm'
@@ -304,7 +324,7 @@ class Autofill(RFTool):
             return 'move'
 
         if self.rfcontext.actions.pressed('increase count') and self.replay:
-            # print('increase count')
+            print('increase count')
             if self.strip_crosses is not None and not self.strip_edges:
                 self.strip_crosses += 1
                 self.replay()
@@ -313,7 +333,7 @@ class Autofill(RFTool):
                 self.replay()
 
         if self.rfcontext.actions.pressed('decrease count') and self.replay:
-            # print('decrease count')
+            print('decrease count')
             if self.strip_crosses is not None and self.strip_crosses > 1 and not self.strip_edges:
                 self.strip_crosses -= 1
                 self.replay()

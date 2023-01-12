@@ -104,6 +104,7 @@ default_rf_keymaps = {
     # autofill
     'previous': ['LEFT_ARROW'],
     'next': ['RIGHT_ARROW'],
+    'add': ['SHIFT+A'],
 
     # contours
     'rotate plane': ['R'],              # rotate loops about contour plane normal
