@@ -61,7 +61,7 @@ class ExpandedPattern:
             try: # some faces will already be deleted if side subdivisions were changed
                 rfcontext.delete_faces([face], del_empty_edges=True, del_empty_verts=False)
             except Exception as e:
-                print("dead")
+                pass
         
         for i in range(len(self.verts)):
             for j in range(len(self.sides)):
@@ -122,13 +122,18 @@ class Side:
                 break
         return sides
 
-    def add_subdivisions(self, rfcontext, num_to_add: int):
+    def change_subdivisions(self, rfcontext, change_by: int):
+        if len(self.verts) + change_by < 2:
+            return
         points = [v.co for v in self.verts]
-        percentages = [i / (len(self.verts) + num_to_add - 1) for i in range(len(self.verts) + num_to_add)]
+        percentages = [i / (len(self.verts) + change_by - 1) for i in range(len(self.verts) + change_by)]
         new_points = restroke(points, percentages)
         new_verts = [self.verts[0]] + [rfcontext.new_vert_point(p) for p in new_points[1:-1]] + [self.verts[-1]]
-        edges = [rfcontext.new_edge([v0, v1]) for (v0, v1) in iter_pairs(new_verts, wrap=False)]
-        rfcontext.select(edges)
+        try: # edge case where its only the endpoints--the edge wont be deleted, so there will be a duplicate edge error if it happens again
+            edges = [rfcontext.new_edge([v0, v1]) for (v0, v1) in iter_pairs(new_verts, wrap=False)]
+            rfcontext.select(edges, only=False)
+        except Exception as e:
+            pass
         rfcontext.delete_verts(self.verts[1:-1])
         self.verts = new_verts
 
@@ -203,6 +208,8 @@ class AutofillPatch:
         self.expanded_patterns[self.i].select(self.rfcontext)
 
     def contains_face(self, face):
+        if self.i == -1:
+            return False
         return self.expanded_patterns[self.i].contains_face(face)
 
     def load(self):
@@ -221,18 +228,22 @@ class AutofillPatch:
         r = requests.post("http://127.0.0.1:5000/get_expanded_patterns", json=to_json())
         self.expanded_patterns = [ExpandedPattern(p['faces'], p['verts'], p['sides']) for p in r.json()]
         self.i = -1
-        self.next()
+        if self.expanded_patterns:
+            self.next()
 
 class AutofillPatches:
     def __init__(self, rfcontext):
         self.rfcontext = rfcontext
-        self.patches = []
+        self.patches: list[AutofillPatch] = []
         self.selected_patch_index = -1
-        self.current_sides = []
+        self.current_sides: list[Side] = []
 
     def add_side(self, side):
         self.current_sides.append(side)
         if len(self.current_sides) == 4:
+            total = sum([len(side.verts) for side in self.current_sides])
+            if total % 2  == 1:
+                self.current_sides[-1].change_subdivisions(self.rfcontext, 1)
             patch = AutofillPatch(self.current_sides, self.rfcontext)
             self.current_sides = []
             self.patches.append(patch)
@@ -244,18 +255,18 @@ class AutofillPatches:
         for side in self.current_sides:
             if sides[0] == side:
                 assert len(sides) == 1
-                side.add_subdivisions(self.rfcontext, 1 if add else -1)
+                side.change_subdivisions(self.rfcontext, 1 if add else -1)
                 return
 
         for patch in self.patches:
             if sides[0] in patch.sides:
                 if len(sides) == 1:
                     num_to_add = 2 if add else -2
-                    patch.sides[patch.sides.index(sides[0])].add_subdivisions(self.rfcontext, num_to_add)
+                    patch.sides[patch.sides.index(sides[0])].change_subdivisions(self.rfcontext, num_to_add)
                 else:
                     if sides[1] in patch.sides:
-                        patch.sides[patch.sides.index(sides[0])].add_subdivisions(self.rfcontext, 1 if add else -1)
-                        patch.sides[patch.sides.index(sides[1])].add_subdivisions(self.rfcontext, 1 if add else -1)
+                        patch.sides[patch.sides.index(sides[0])].change_subdivisions(self.rfcontext, 1 if add else -1)
+                        patch.sides[patch.sides.index(sides[1])].change_subdivisions(self.rfcontext, 1 if add else -1)
                     else:
                         return # sides are not part of same patch
                 patch.load()
