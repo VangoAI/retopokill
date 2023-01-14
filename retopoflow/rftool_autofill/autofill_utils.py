@@ -57,6 +57,12 @@ class ExpandedPattern:
     def destroy(self, rfcontext):
         if not self.drawn_verts and not self.drawn_faces:
             return
+        for face in self.drawn_faces:
+            try: # some faces will already be deleted if side subdivisions were changed
+                rfcontext.delete_faces([face], del_empty_edges=True, del_empty_verts=False)
+            except Exception as e:
+                print("dead")
+        
         for i in range(len(self.verts)):
             for j in range(len(self.sides)):
                 for k in range(len(self.sides[j])):
@@ -81,12 +87,50 @@ class ExpandedPattern:
         return ExpandedPattern([], [], [])
 
 class Side:
-    def __init__(self, edges: list):
+    def __init__(self):
+        self.verts = []
+
+    @staticmethod
+    def from_edges(edges: list):
+        side = Side()
+        side.verts = [edge.verts[0] for edge in edges] + [edges[-1].verts[1]]
+        return side
+    
+    @staticmethod
+    def from_verts(verts: list):
+        side = Side()
+        side.verts = verts
+        return side
+
+    @staticmethod
+    def multiple_from_edges(edges: set):
         '''
-        takes in a list of edges that make up a side
-        turns them into a list of the vertices that make up the side, including endpoints
+        turn an unordered set of edges into (possible multiple) sides with ordered verts
         '''
-        self.verts = [edge.verts[0] for edge in edges] + [edges[-1].verts[1]]
+        sides = [Side.from_edges([edge]) for edge in edges]
+        while len(sides) > 1:
+            for i in range(len(sides)):
+                for j in range(i + 1, len(sides)):
+                    if sides[i].shares_endpoint_with(sides[j]):
+                        sides[i].merge(sides[j])
+                        sides.pop(j)
+                        break
+                else:
+                    continue
+                break
+            else:
+                break
+        return sides
+
+    def add_subdivisions(self, rfcontext, num_to_add: int):
+        points = [v.co for v in self.verts]
+        percentages = [i / (len(self.verts) + num_to_add - 1) for i in range(len(self.verts) + num_to_add)]
+        new_points = restroke(points, percentages)
+        new_verts = [self.verts[0]] + [rfcontext.new_vert_point(p) for p in new_points[1:-1]] + [self.verts[-1]]
+        edges = [rfcontext.new_edge([v0, v1]) for (v0, v1) in iter_pairs(new_verts, wrap=False)]
+        rfcontext.select(edges)
+        rfcontext.delete_verts(self.verts[1:-1])
+        self.verts = new_verts
 
     def shares_endpoint_with(self, other):
         return self.verts[0] == other.verts[0] or self.verts[0] == other.verts[-1] or self.verts[-1] == other.verts[0] or self.verts[-1] == other.verts[-1]
@@ -103,8 +147,11 @@ class Side:
         else:
             assert False, 'sides do not share an endpoint'
 
+    def __eq__(self, other):
+        return set(self.verts) == set(other.verts) # to account for reversed sides
+
 class AutofillPatch:
-    def __init__(self, sides: list[Side]):
+    def __init__(self, sides: list[Side], rfcontext):
         '''
         takes a list of Side objects, not necessarily in CCW order.
         '''
@@ -134,24 +181,26 @@ class AutofillPatch:
                     break
             return ordered_sides
 
+        self.rfcontext = rfcontext
         self.sides = order_sides(sides)
-        self.load()
+        self.expanded_patterns = []
         self.i = -1
+        self.load()
 
-    def next(self, rfcontext):
-        self.change(rfcontext, 1)
+    def next(self):
+        self.change(1)
 
-    def prev(self, rfcontext):
-        self.change(rfcontext, -1)
+    def prev(self):
+        self.change(-1)
 
-    def change(self, rfcontext, x):
-        self.expanded_patterns[self.i].destroy(rfcontext)
+    def change(self, x):
+        self.expanded_patterns[self.i].destroy(self.rfcontext)
         self.i = min(max(0, self.i + x), len(self.expanded_patterns) - 1)
-        self.expanded_patterns[self.i].draw(rfcontext, self)
-        self.select(rfcontext)
+        self.expanded_patterns[self.i].draw(self.rfcontext, self)
+        self.select()
 
-    def select(self, rfcontext):
-        self.expanded_patterns[self.i].select(rfcontext)
+    def select(self):
+        self.expanded_patterns[self.i].select(self.rfcontext)
 
     def contains_face(self, face):
         return self.expanded_patterns[self.i].contains_face(face)
@@ -166,8 +215,13 @@ class AutofillPatch:
                 sides.append([(v.co.x, v.co.y, v.co.z) for v in side.verts])
             return sides
 
+        if self.i != -1:
+            self.expanded_patterns[self.i].destroy(self.rfcontext)
+
         r = requests.post("http://127.0.0.1:5000/get_expanded_patterns", json=to_json())
         self.expanded_patterns = [ExpandedPattern(p['faces'], p['verts'], p['sides']) for p in r.json()]
+        self.i = -1
+        self.next()
 
 class AutofillPatches:
     def __init__(self, rfcontext):
@@ -179,15 +233,33 @@ class AutofillPatches:
     def add_side(self, side):
         self.current_sides.append(side)
         if len(self.current_sides) == 4:
-            patch = AutofillPatch(self.current_sides)
+            patch = AutofillPatch(self.current_sides, self.rfcontext)
             self.current_sides = []
             self.patches.append(patch)
-            self.patches[-1].next(self.rfcontext)
             self.selected_patch_index = len(self.patches) - 1
 
-    def replace_side(self, side):
+    def change_subdivisions(self, sides: list[Side], add: bool):
+        assert len(sides) == 1 or len(sides) == 2
+
+        for side in self.current_sides:
+            if sides[0] == side:
+                assert len(sides) == 1
+                side.add_subdivisions(self.rfcontext, 1 if add else -1)
+                return
+
         for patch in self.patches:
-            patch.replace_side(side)
+            if sides[0] in patch.sides:
+                if len(sides) == 1:
+                    num_to_add = 2 if add else -2
+                    patch.sides[patch.sides.index(sides[0])].add_subdivisions(self.rfcontext, num_to_add)
+                else:
+                    if sides[1] in patch.sides:
+                        patch.sides[patch.sides.index(sides[0])].add_subdivisions(self.rfcontext, 1 if add else -1)
+                        patch.sides[patch.sides.index(sides[1])].add_subdivisions(self.rfcontext, 1 if add else -1)
+                    else:
+                        return # sides are not part of same patch
+                patch.load()
+                return
 
     def select_patch_from_face(self, face):
         '''
@@ -198,7 +270,7 @@ class AutofillPatches:
                 if self.selected_patch_index == i:
                     self.deselect()
                 else:
-                    patch.select(self.rfcontext)
+                    patch.select()
                     self.selected_patch_index = i
                 return
         self.deselect()
@@ -212,11 +284,11 @@ class AutofillPatches:
 
     def next(self):
         assert self.is_patch_selected()
-        self.patches[self.selected_patch_index].next(self.rfcontext)
+        self.patches[self.selected_patch_index].next()
 
     def prev(self):
         assert self.is_patch_selected()
-        self.patches[self.selected_patch_index].prev(self.rfcontext)
+        self.patches[self.selected_patch_index].prev()
 
 def process_stroke_filter(stroke, min_distance=1.0, max_distance=2.0):
     ''' filter stroke to pts that are at least min_distance apart '''

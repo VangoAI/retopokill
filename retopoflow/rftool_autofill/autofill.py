@@ -304,16 +304,9 @@ class Autofill(RFTool):
             edges: set = self.rfcontext.get_selected_edges()
             if not edges:
                 return
-            # build a side with ordered edges
-            sides = [Side([edge]) for edge in edges]
-            while len(sides) > 1:
-                side = sides.pop()
-                for other in sides:
-                    if other.shares_endpoint_with(side):
-                        other.merge(side)
-                        break
-                else:
-                    assert False, 'edges not connected'
+            sides = Side.multiple_from_edges(edges)
+            if len(sides) != 1:
+                return
             self.patches.add_side(sides[0])
             return
 
@@ -323,23 +316,15 @@ class Autofill(RFTool):
             self.move_cancelled = 'cancel'
             return 'move'
 
-        if self.rfcontext.actions.pressed('increase count') and self.replay:
+        if self.rfcontext.actions.pressed('increase count'):
             print('increase count')
-            if self.strip_crosses is not None and not self.strip_edges:
-                self.strip_crosses += 1
-                self.replay()
-            elif self.strip_loops is not None:
-                self.strip_loops += 1
-                self.replay()
+            self.change_subdivisions(True)
+            return
 
-        if self.rfcontext.actions.pressed('decrease count') and self.replay:
+        if self.rfcontext.actions.pressed('decrease count'):
             print('decrease count')
-            if self.strip_crosses is not None and self.strip_crosses > 1 and not self.strip_edges:
-                self.strip_crosses -= 1
-                self.replay()
-            elif self.strip_loops is not None and self.strip_loops > 1:
-                self.strip_loops -= 1
-                self.replay()
+            self.change_subdivisions(False)
+            return
 
         
         if self.rfcontext.actions.pressed('next'):
@@ -359,6 +344,13 @@ class Autofill(RFTool):
     def prev_autofill(self):
         if self.patches.is_patch_selected():
             self.patches.prev()
+    
+    @RFTool.dirty_when_done
+    def change_subdivisions(self, add: bool):
+        edges = self.rfcontext.get_selected_edges()
+        sides = Side.multiple_from_edges(edges)
+        if len(sides) == 1 or len(sides) == 2:
+            self.patches.change_subdivisions(sides, add=add)
 
     @RFWidget.on_actioning('Autofill stroke')
     def stroking(self):
@@ -465,7 +457,7 @@ class Autofill(RFTool):
         with self.defer_recomputing_while():
             verts = [self.rfcontext.new2D_vert_point(s) for s in nstroke]
             edges = [self.rfcontext.new_edge([v0, v1]) for (v0, v1) in iter_pairs(verts, wrap=True)]
-            self.patches.add_side(Side(edges))
+            self.patches.add_side(Side.from_verts(verts))
             self.rfcontext.select(edges)
             self.just_created = True
 
@@ -488,7 +480,6 @@ class Autofill(RFTool):
         crosses = self.strip_crosses
         percentages = [i / crosses for i in range(crosses+1)]
         nstroke = restroke(stroke, percentages)
-
         if len(nstroke) < 2: return  # too few stroke points, from a short stroke?
 
         snap0,_ = self.rfcontext.accel_nearest2D_vert(point=nstroke[0],  max_dist=options['strokes merge dist']) # self.rfwidgets['brush'].radius)
@@ -507,7 +498,7 @@ class Autofill(RFTool):
                 snap1.merge(verts[-1])
                 verts[-1] = snap1
             self.rfcontext.select(edges)
-            self.patches.add_side(Side(edges))
+            self.patches.add_side(Side.from_verts(verts))
             self.just_created = True
             
     def mergeSnapped(self):
