@@ -80,6 +80,7 @@ class ExpandedPattern:
         rfcontext.select(self.drawn_faces)
 
     def contains_face(self, face):
+        print(face, self.drawn_faces)
         return face in self.drawn_faces
 
     @staticmethod
@@ -122,6 +123,34 @@ class Side:
                 break
         return sides
 
+    @staticmethod
+    def order(sides: list['Side']) -> list['Side']:
+        '''
+        orders the sides in CW or CCW order if they form a patch
+        otherwise, return an arbitrary ordering
+        '''
+        ordered_sides = []
+        curr = sides[0]
+        sides.remove(curr)
+        while True:
+            ordered_sides.append(curr)
+            for i in range(len(sides)):
+                if curr.verts[-1] == sides[i].verts[0]:
+                    curr = sides[i]
+                    sides.remove(curr)
+                    break
+                elif curr.verts[-1] == sides[i].verts[-1]:
+                    curr = sides[i]
+                    curr.verts = curr.verts[::-1]
+                    sides.remove(curr)
+                    break
+            else:
+                return ordered_sides + sides # does not form a patch
+            if curr.verts[-1] == ordered_sides[0].verts[0]:
+                ordered_sides.append(curr)
+                break
+        return ordered_sides
+
     def change_subdivisions(self, rfcontext, change_by: int):
         if len(self.verts) + change_by < 2:
             return
@@ -158,36 +187,11 @@ class Side:
 class AutofillPatch:
     def __init__(self, sides: list[Side], rfcontext):
         '''
-        takes a list of Side objects, not necessarily in order
+        takes a list of Side objects
+        must be in either CW or CCW order.
         '''
-        def order_sides(sides: list[Side]) -> list[Side]:
-            '''
-            orders the sides in CW or CCW order
-            '''
-            ordered_sides = []
-            curr = sides[0]
-            sides.remove(curr)
-            while True:
-                ordered_sides.append(curr)
-                for i in range(len(sides)):
-                    if curr.verts[-1] == sides[i].verts[0]:
-                        curr = sides[i]
-                        sides.remove(curr)
-                        break
-                    elif curr.verts[-1] == sides[i].verts[-1]:
-                        curr = sides[i]
-                        curr.verts = curr.verts[::-1]
-                        sides.remove(curr)
-                        break
-                else:
-                    assert False # should never happen
-                if curr.verts[-1] == ordered_sides[0].verts[0]:
-                    ordered_sides.append(curr)
-                    break
-            return ordered_sides
-
         self.rfcontext = rfcontext
-        self.sides = order_sides(sides)
+        self.sides = sides
         self.expanded_patterns = []
         self.i = -1
         self.load()
@@ -240,7 +244,8 @@ class AutofillPatches:
 
     def add_side(self, side):
         self.current_sides.append(side)
-        if len(self.current_sides) == 4:
+        self.current_sides = Side.order(self.current_sides)
+        if self.current_sides[0].verts[0] == self.current_sides[-1].verts[-1]: # forms a patch
             total = sum([len(side.verts) for side in self.current_sides])
             if total % 2  == 1:
                 self.current_sides[-1].change_subdivisions(self.rfcontext, 1)
@@ -277,6 +282,7 @@ class AutofillPatches:
         select the patch containing the face
         '''
         for i, patch in enumerate(self.patches):
+            print(i)
             if patch.contains_face(face):
                 if self.selected_patch_index == i:
                     self.deselect()
@@ -314,6 +320,8 @@ def process_stroke_filter(stroke, min_distance=1.0, max_distance=2.0):
             nstroke.append(q)
             l -= max_distance
     return nstroke
+
+
 
 def process_stroke_source(stroke, raycast, Point_to_Point2D=None, is_point_on_mirrored_side=None, mirror_point=None, clamp_point_to_symmetry=None):
     ''' filter out pts that don't hit source on non-mirrored side '''
