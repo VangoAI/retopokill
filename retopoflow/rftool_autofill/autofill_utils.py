@@ -158,14 +158,14 @@ class Side:
 class AutofillPatch:
     def __init__(self, sides: list[Side], rfcontext):
         '''
-        takes a list of Side objects, not necessarily in CCW order.
+        takes a list of Side objects, not necessarily in order
         '''
         def order_sides(sides: list[Side]) -> list[Side]:
             '''
-            orders the sides in CCW order
+            orders the sides in CW or CCW order
             '''
             ordered_sides = []
-            curr = sides[0] # assumes first side is already CCW--change later
+            curr = sides[0]
             sides.remove(curr)
             while True:
                 ordered_sides.append(curr)
