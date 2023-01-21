@@ -365,9 +365,23 @@ class AutofillPatches:
         self.patches[self.selected_patch_index].prev()
 
     def save(self):
+        patches = []
+        for patch in self.patches:
+            try:
+                patches.append(patch.save())
+            except Exception as e:
+                pass
+
+        current_sides = []
+        for side in self.current_sides:
+            try:
+                current_sides.append(side.save())
+            except Exception as e:
+                pass
+
         return {
-            'patches': [patch.save() for patch in self.patches],
-            'current_sides': [side.save() for side in self.current_sides],
+            'patches': patches,
+            'current_sides': current_sides,
             'selected_patch_index': self.selected_patch_index,
         }
 
