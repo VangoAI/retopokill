@@ -275,6 +275,7 @@ class Autofill(RFTool):
 
         if self.actions.pressed({'select single', 'select single add'}, unpress=False):
             sel_only = self.actions.pressed('select single')
+            self.rfcontext.undo_push('select single')
             selectable_edges = [e for e in self.rfcontext.visible_edges() if len(e.link_faces) < 2]
             edge,_ = self.rfcontext.nearest2D_edge(edges=selectable_edges, max_dist=10)
             if edge:
@@ -302,6 +303,7 @@ class Autofill(RFTool):
 
         if self.rfcontext.actions.pressed('add'):
             edges: set = self.rfcontext.get_selected_edges()
+            # undo push seems to happen already
             if not edges:
                 return
             sides = Side.multiple_from_edges(edges)
@@ -317,21 +319,23 @@ class Autofill(RFTool):
             return 'move'
 
         if self.rfcontext.actions.pressed('increase count'):
-            print('increase count')
+            self.rfcontext.undo_push('increase count')
             self.change_subdivisions(True)
             return
 
         if self.rfcontext.actions.pressed('decrease count'):
-            print('decrease count')
+            self.rfcontext.undo_push('decrease count')
             self.change_subdivisions(False)
             return
 
         
         if self.rfcontext.actions.pressed('next'):
+            self.rfcontext.undo_push('next')
             self.next_autofill()
             return
         
         if self.rfcontext.actions.pressed('previous'):
+            self.rfcontext.undo_push('previous')
             self.prev_autofill()
             return
 
