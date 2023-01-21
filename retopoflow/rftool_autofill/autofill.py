@@ -23,12 +23,8 @@ import math
 import time
 import bgl
 import bpy
-from math import isnan
 
 from contextlib import contextmanager
-
-from mathutils import Vector, Matrix
-from mathutils.geometry import intersect_point_tri_2d
 
 from ..rftool import RFTool
 from ..rfwidget import RFWidget
@@ -36,29 +32,24 @@ from ..rfwidgets.rfwidget_default     import RFWidget_Default_Factory
 from ..rfwidgets.rfwidget_brushstroke import RFWidget_BrushStroke_Factory
 from ..rfwidgets.rfwidget_hidden      import RFWidget_Hidden_Factory
 
-
-from ...addon_common.common.debug import dprint
 from ...addon_common.common.fsm import FSM
 from ...addon_common.common.globals import Globals
 from ...addon_common.common.profiler import profiler
 from ...addon_common.common.maths import (
-    Point, Vec, Direction,
-    Point2D, Vec2D,
-    Accel2D,
-    clamp, mid,
+    Point, Vec2D,
 )
-from ...addon_common.common.bezier import CubicBezierSpline, CubicBezier
-from ...addon_common.common.utils import iter_pairs, iter_running_sum, min_index, max_index, has_duplicates
-from ...addon_common.common.boundvar import BoundBool, BoundInt, BoundFloat
+
+from ...addon_common.common.utils import iter_pairs
+from ...addon_common.common.boundvar import BoundInt
 from ...addon_common.common.drawing import DrawCallbacks
 from ...config.options import options, themes
 
 from .autofill_utils import (
     AutofillPatches, Side,
-    process_stroke_filter, process_stroke_source,
-    find_edge_cycles,
-    find_edge_strips, get_strip_verts,
-    restroke, walk_to_corner,
+)
+
+from ..rftool_strokes.strokes_utils import (
+    process_stroke_filter, process_stroke_source, restroke
 )
 
 class Autofill(RFTool):
