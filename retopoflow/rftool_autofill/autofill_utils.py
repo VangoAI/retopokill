@@ -27,8 +27,8 @@ from ...addon_common.common.debug  import dprint
 from ...addon_common.common.maths  import Point,Point2D,Vec2D,Vec, Normal, clamp
 from ...addon_common.common.bezier import CubicBezierSpline, CubicBezier
 from ...addon_common.common.utils  import iter_pairs
-import collections
 import requests
+import copy
 
 class ExpandedPattern:
     def __init__(self, faces: list[list[int, int, int, int]], verts: list[tuple[float, float, float]], sides: list[list[int]]):
@@ -80,8 +80,34 @@ class ExpandedPattern:
         rfcontext.select(self.drawn_faces)
 
     def contains_face(self, face):
-        print(face, self.drawn_faces)
         return face in self.drawn_faces
+
+    def save(self):
+        return {
+            'faces': copy.deepcopy(self.faces),
+            'verts': copy.deepcopy(self.verts),
+            'sides': copy.deepcopy(self.sides),
+            'drawn_verts': [copy.deepcopy(v.co) for v in self.drawn_verts],
+        }
+
+    @staticmethod
+    def from_saved(expanded_pattern, rfcontext):
+        ep = ExpandedPattern(expanded_pattern['faces'], expanded_pattern['verts'], expanded_pattern['sides'])
+        if expanded_pattern['drawn_verts']:
+            drawn_verts = []
+            for p in expanded_pattern['drawn_verts']:
+                vert, dist = rfcontext.nearest_vert_point(p)
+                if dist == 0:
+                    drawn_verts.append(vert)
+            ep.drawn_verts = drawn_verts
+
+            drawn_faces = []
+            for face in ep.faces:
+                face, dist = rfcontext.nearest2D_face(Point.average([drawn_verts[v_i].co for v_i in face]))
+                if dist == 0:
+                    drawn_faces.append(face)
+            ep.drawn_faces = drawn_faces
+        return ep
 
     @staticmethod
     def none():
@@ -181,11 +207,25 @@ class Side:
         else:
             assert False, 'sides do not share an endpoint'
 
+    def save(self):
+        return {
+            'points': [copy.deepcopy(v.co) for v in self.verts]
+        }
+
+    @staticmethod
+    def from_saved(side, rfcontext):
+        verts = []
+        for p in side['points']:
+            vert, dist = rfcontext.nearest_vert_point(p)
+            if dist == 0:
+                verts.append(vert)
+        return Side.from_verts(verts)
+
     def __eq__(self, other):
         return set(self.verts) == set(other.verts) # to account for reversed sides
 
 class AutofillPatch:
-    def __init__(self, sides: list[Side], rfcontext):
+    def __init__(self, sides: list[Side] = None, rfcontext=None):
         '''
         takes a list of Side objects
         must be in either CW or CCW order.
@@ -226,6 +266,9 @@ class AutofillPatch:
                 sides.append([(v.co.x, v.co.y, v.co.z) for v in side.verts])
             return sides
 
+        if not self.sides:
+            return
+
         if self.i != -1:
             self.expanded_patterns[self.i].destroy(self.rfcontext)
 
@@ -234,6 +277,21 @@ class AutofillPatch:
         self.i = -1
         if self.expanded_patterns:
             self.next()
+
+    def save(self):
+        return {
+            'sides': [side.save() for side in self.sides],
+            'expanded_patterns': [expanded_pattern.save() for expanded_pattern in self.expanded_patterns],
+            'i': self.i,
+        }
+
+    @staticmethod
+    def from_saved(patch_saved: dict, rfcontext):
+        patch = AutofillPatch(rfcontext=rfcontext)
+        patch.sides = [Side.from_saved(side, rfcontext) for side in patch_saved['sides']]
+        patch.expanded_patterns = [ExpandedPattern.from_saved(expanded_pattern, rfcontext) for expanded_pattern in patch_saved['expanded_patterns']]
+        patch.i = patch_saved['i']
+        return patch
 
 class AutofillPatches:
     def __init__(self, rfcontext):
@@ -282,7 +340,6 @@ class AutofillPatches:
         select the patch containing the face
         '''
         for i, patch in enumerate(self.patches):
-            print(i)
             if patch.contains_face(face):
                 if self.selected_patch_index == i:
                     self.deselect()
@@ -306,6 +363,18 @@ class AutofillPatches:
     def prev(self):
         assert self.is_patch_selected()
         self.patches[self.selected_patch_index].prev()
+
+    def save(self):
+        return {
+            'patches': [patch.save() for patch in self.patches],
+            'current_sides': [side.save() for side in self.current_sides],
+            'selected_patch_index': self.selected_patch_index,
+        }
+
+    def load_saved(self, patches_saved: dict):
+        self.patches = [AutofillPatch.from_saved(patch, self.rfcontext) for patch in patches_saved['patches']]
+        self.selected_patch_index = patches_saved['selected_patch_index']
+        self.current_sides = [Side.from_saved(side, self.rfcontext) for side in patches_saved['current_sides']]
 
 def process_stroke_filter(stroke, min_distance=1.0, max_distance=2.0):
     ''' filter stroke to pts that are at least min_distance apart '''
