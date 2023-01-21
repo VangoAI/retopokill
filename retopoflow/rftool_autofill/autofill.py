@@ -293,14 +293,7 @@ class Autofill(RFTool):
             return
 
         if self.rfcontext.actions.pressed('add'):
-            edges: set = self.rfcontext.get_selected_edges()
-            # undo push seems to happen already
-            if not edges:
-                return
-            sides = Side.multiple_from_edges(edges)
-            if len(sides) != 1:
-                return
-            self.patches.add_side(sides[0])
+            self.add_selected()
             return
 
         if self.rfcontext.actions.pressed('grab'):
@@ -329,6 +322,18 @@ class Autofill(RFTool):
             self.rfcontext.undo_push('previous')
             self.prev_autofill()
             return
+
+    @RFTool.dirty_when_done
+    def add_selected(self):
+        edges: set = self.rfcontext.get_selected_edges()
+        # undo push seems to happen already
+        if not edges:
+            return
+        sides = Side.multiple_from_edges(edges)
+        if len(sides) != 1:
+            return
+        self.patches.add_side(sides[0])
+        return
 
     @RFTool.dirty_when_done
     def next_autofill(self):
