@@ -24,6 +24,7 @@ import copy
 from ...config.options import options
 from ...addon_common.common.blender import tag_redraw_all
 from ..rftool_autofill.autofill import Autofill
+from ..rftool_autofill.autofill_utils import AutofillPatches
 
 class RetopoFlow_Undo:
     def setup_undo(self):
@@ -68,7 +69,7 @@ class RetopoFlow_Undo:
         self.grease_marks = state['grease_marks']
         for rftool in self.rftools:
             if isinstance(rftool, Autofill):
-                rftool.patches.load_saved(state['patches_saved'])
+                rftool.patches = AutofillPatches.from_saved(state['patches_saved'], self)
         if set_tool:
             self.select_rftool(state['tool']) #, forceUpdate=True, changeTool=options['undo change tool'])
         tag_redraw_all('restoring state')

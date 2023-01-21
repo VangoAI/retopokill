@@ -371,10 +371,13 @@ class AutofillPatches:
             'selected_patch_index': self.selected_patch_index,
         }
 
-    def load_saved(self, patches_saved: dict):
-        self.patches = [AutofillPatch.from_saved(patch, self.rfcontext) for patch in patches_saved['patches']]
-        self.selected_patch_index = patches_saved['selected_patch_index']
-        self.current_sides = [Side.from_saved(side, self.rfcontext) for side in patches_saved['current_sides']]
+    @staticmethod
+    def from_saved(patches_saved: dict, rfcontext):
+        patches = AutofillPatches(rfcontext)
+        patches.patches = [AutofillPatch.from_saved(patch, rfcontext) for patch in patches_saved['patches']]
+        patches.selected_patch_index = patches_saved['selected_patch_index']
+        patches.current_sides = [Side.from_saved(side, rfcontext) for side in patches_saved['current_sides']]
+        return patches
 
 def process_stroke_filter(stroke, min_distance=1.0, max_distance=2.0):
     ''' filter stroke to pts that are at least min_distance apart '''
