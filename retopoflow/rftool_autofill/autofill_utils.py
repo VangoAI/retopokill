@@ -145,11 +145,14 @@ class Side:
         return sides
 
     @staticmethod
-    def order(sides: list['Side']) -> list['Side']:
+    def order(sides: list['Side']) -> tuple[list['Side'], bool]:
         '''
-        orders the sides in CW or CCW order if they form a patch
-        otherwise, return an arbitrary ordering
+        if the sides form a patch, return the sides in CW/CCW order.
+        if the sides don't form a patch, return an arbitrary ordering.
+        also returns if the sides form a patch or not.
         '''
+        sides = sides[:]
+
         ordered_sides = []
         curr = sides[0]
         sides.remove(curr)
@@ -166,11 +169,11 @@ class Side:
                     sides.remove(curr)
                     break
             else:
-                return ordered_sides + sides # does not form a patch
+                return ordered_sides + sides, False # does not form a patch
             if curr.verts[-1] == ordered_sides[0].verts[0]:
                 ordered_sides.append(curr)
                 break
-        return ordered_sides
+        return ordered_sides, True
 
     def change_subdivisions(self, rfcontext, change_by: int):
         if len(self.verts) + change_by < 2:
@@ -297,8 +300,8 @@ class AutofillPatches:
 
     def add_side(self, side):
         self.current_sides.append(side)
-        self.current_sides = Side.order(self.current_sides)
-        if self.current_sides[0].verts[0] == self.current_sides[-1].verts[-1]: # forms a patch
+        self.current_sides, forms_patch = Side.order(self.current_sides)
+        if forms_patch:
             total = sum([len(side.verts) for side in self.current_sides])
             if total % 2  == 1:
                 self.current_sides[-1].change_subdivisions(self.rfcontext, 1)
