@@ -24,6 +24,7 @@ from ...addon_common.common.utils  import iter_pairs
 from ..rftool_strokes.strokes_utils import restroke
 import requests
 import copy
+import json
 
 class ExpandedPattern:
     def __init__(self, faces: list[list[int, int, int, int]], verts: list[tuple[float, float, float]], sides: list[list[int]]):
@@ -82,7 +83,7 @@ class ExpandedPattern:
             'faces': copy.deepcopy(self.faces),
             'verts': copy.deepcopy(self.verts),
             'sides': copy.deepcopy(self.sides),
-            'drawn_verts': [copy.deepcopy(v.co) for v in self.drawn_verts],
+            'drawn_verts': [(v.co.x, v.co.y, v.co.z) for v in self.drawn_verts],
         }
 
     @staticmethod
@@ -91,7 +92,7 @@ class ExpandedPattern:
         if expanded_pattern['drawn_verts']:
             drawn_verts = []
             for p in expanded_pattern['drawn_verts']:
-                vert, dist = rfcontext.nearest_vert_point(p)
+                vert, dist = rfcontext.nearest_vert_point(Point(p))
                 if dist == 0:
                     drawn_verts.append(vert)
             ep.drawn_verts = drawn_verts
@@ -207,14 +208,14 @@ class Side:
 
     def save(self):
         return {
-            'points': [copy.deepcopy(v.co) for v in self.verts]
+            'points': [(v.co.x, v.co.y, v.co.z) for v in self.verts]
         }
 
     @staticmethod
     def from_saved(side, rfcontext):
         verts = []
         for p in side['points']:
-            vert, dist = rfcontext.nearest_vert_point(p)
+            vert, dist = rfcontext.nearest_vert_point(Point(p))
             if dist == 0:
                 verts.append(vert)
         return Side.from_verts(verts)
@@ -365,7 +366,7 @@ class AutofillPatches:
     def save(self):
         patches = []
         for patch in self.patches:
-            try:
+            try: # if the patch was externally modified (verts/edges/faces dissolved), get rid of it
                 patches.append(patch.save())
             except Exception as e:
                 pass
@@ -390,3 +391,8 @@ class AutofillPatches:
         patches.selected_patch_index = patches_saved['selected_patch_index']
         patches.current_sides = [Side.from_saved(side, rfcontext) for side in patches_saved['current_sides']]
         return patches
+
+    def to_file(self, path):
+        saved = self.save()
+        with open(path, 'w+') as outfile:
+            json.dump(saved, outfile)
