@@ -275,6 +275,10 @@ class RetopoFlow_BlenderSave:
         self.blender_ui_reset()
         try:
             bpy.ops.wm.save_mainfile()
+
+            filepath = options.get_patches_filepath()
+            patches = self.get_patches()
+            patches.to_file(filepath)
         except Exception as e:
             # could not save for some reason; let the artist know!
             self.alert_user(

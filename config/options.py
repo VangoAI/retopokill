@@ -140,6 +140,7 @@ class Options:
         'quickstart_filename':  'RetopoFlow_quickstart',
         'profiler_filename':    'RetopoFlow_profiler.txt',
         'keymaps filename':     'RetopoFlow_keymaps.json',
+        'patches_filename':     'RetopoFlow_patches.json',
         'blender state':        'RetopoFlow_BlenderState',    # name of text block that contains data about blender state
         'rotate object':        'RetopoFlow_Rotate',          # name of rotate object used for setting view
 
@@ -561,6 +562,8 @@ class Options:
         base, ext = os.path.splitext(filename)
         return os.path.join(path, f'{base}{suffix}{ext}')
 
+    def get_patches_filepath(self):
+        return os.path.abspath(bpy.data.filepath)[:-6] + "_" + options['patches_filename']
 
 class Themes:
     # fallback color for when specified key is not found

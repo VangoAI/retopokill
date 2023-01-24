@@ -394,5 +394,15 @@ class AutofillPatches:
 
     def to_file(self, path):
         saved = self.save()
+        saved['current_sides'] = [] # don't save the current sides
         with open(path, 'w+') as outfile:
             json.dump(saved, outfile)
+
+    @staticmethod
+    def from_file(path, rfcontext):
+        '''
+        will error if the file does not exist
+        '''
+        with open(path, 'r') as infile:
+            saved = json.load(infile)
+            return AutofillPatches.from_saved(saved, rfcontext)

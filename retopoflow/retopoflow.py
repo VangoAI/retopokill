@@ -181,6 +181,7 @@ class RetopoFlow(
             ('Setting up rotation target',          self.setup_rotate_about_active),
             ('Setting up RetopoFlow states',        self.setup_states),
             ('Setting up RetopoFlow tools',         self.setup_rftools),
+            ('Setting up patches',                  self.setup_patches),
             ('Setting up grease marks',             self.setup_grease),
             ('Setting up visualizations',           self.setup_drawing),
             ('Setting up user interface',           self.setup_ui),                  # must be called after self.setup_target() and self.setup_rftools()!!
