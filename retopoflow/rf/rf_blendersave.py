@@ -247,6 +247,7 @@ class RetopoFlow_BlenderSave:
                     copy=True,              # does not make saved file active
                 )
                 options['last auto save path'] = filepath
+                self.save_patches()
                 self.last_change_count = self.change_count
             except Exception as e:
                 print(f'   caught exception: {e}')
@@ -275,10 +276,7 @@ class RetopoFlow_BlenderSave:
         self.blender_ui_reset()
         try:
             bpy.ops.wm.save_mainfile()
-
-            filepath = options.get_patches_filepath()
-            patches = self.get_patches()
-            patches.to_file(filepath)
+            self.save_patches()
         except Exception as e:
             # could not save for some reason; let the artist know!
             self.alert_user(
@@ -291,3 +289,7 @@ class RetopoFlow_BlenderSave:
         filepath = os.path.abspath(bpy.data.filepath)
         print(f'saved: {filepath}')
 
+    def save_patches(self):
+        filepath = options.get_patches_filepath()
+        patches = self.get_patches()
+        patches.to_file(filepath)
