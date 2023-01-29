@@ -303,7 +303,7 @@ class AutofillPatches:
         self.current_sides.append(side)
         self.current_sides, forms_patch = Side.order(self.current_sides)
         if forms_patch:
-            total = sum([len(side.verts) for side in self.current_sides])
+            total = sum([len(side.verts) - 1 for side in self.current_sides])
             if total % 2  == 1:
                 self.current_sides[-1].change_subdivisions(self.rfcontext, 1)
             patch = AutofillPatch(self.current_sides, self.rfcontext)
