@@ -236,14 +236,26 @@ class AutofillPatch:
         self.load()
 
     def next(self):
-        self.change(1)
+        '''
+        returns whether the next expanded pattern was succesfully loaded
+        '''
+        if self.i + 1 < len(self.expanded_patterns):
+            self.change(1)
+            return True
+        return False
 
     def prev(self):
-        self.change(-1)
+        '''
+        returns whether the previous expanded pattern was succesfully loaded
+        '''
+        if self.i - 1 >= 0:
+            self.change(-1)
+            return True
+        return False
 
-    def change(self, x):
+    def change(self, x: int):
         self.expanded_patterns[self.i].destroy(self.rfcontext)
-        self.i = min(max(0, self.i + x), len(self.expanded_patterns) - 1)
+        self.i = self.i + x
         self.expanded_patterns[self.i].draw(self.rfcontext, self)
         self.select()
 
@@ -311,14 +323,17 @@ class AutofillPatches:
             self.patches.append(patch)
             self.selected_patch_index = len(self.patches) - 1
 
-    def change_subdivisions(self, sides: list[Side], add: bool):
+    def change_subdivisions(self, sides: list[Side], add: bool) -> bool:
+        '''
+        returns whether a side's subdivision was succesfully changed
+        '''
         assert len(sides) == 1 or len(sides) == 2
 
         for side in self.current_sides:
             if sides[0] == side:
                 assert len(sides) == 1
                 side.change_subdivisions(self.rfcontext, 1 if add else -1)
-                return
+                return True
 
         for patch in self.patches:
             if sides[0] in patch.sides:
@@ -330,9 +345,10 @@ class AutofillPatches:
                         patch.sides[patch.sides.index(sides[0])].change_subdivisions(self.rfcontext, 1 if add else -1)
                         patch.sides[patch.sides.index(sides[1])].change_subdivisions(self.rfcontext, 1 if add else -1)
                     else:
-                        return # sides are not part of same patch
+                        break # sides are not part of same patch
                 patch.load()
-                return
+                return True
+        return False
 
     def select_patch_from_face(self, face):
         '''
@@ -355,13 +371,13 @@ class AutofillPatches:
     def is_patch_selected(self):
         return self.selected_patch_index != -1
 
-    def next(self):
+    def next(self) -> bool:
         assert self.is_patch_selected()
-        self.patches[self.selected_patch_index].next()
+        return self.patches[self.selected_patch_index].next()
 
-    def prev(self):
+    def prev(self) -> bool:
         assert self.is_patch_selected()
-        self.patches[self.selected_patch_index].prev()
+        return self.patches[self.selected_patch_index].prev()
 
     def save(self):
         patches = []

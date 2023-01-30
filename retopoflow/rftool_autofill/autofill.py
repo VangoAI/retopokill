@@ -266,7 +266,7 @@ class Autofill(RFTool):
 
         if self.actions.pressed({'select single', 'select single add'}, unpress=False):
             sel_only = self.actions.pressed('select single')
-            self.rfcontext.undo_push('select single')
+
             selectable_edges = [e for e in self.rfcontext.visible_edges() if len(e.link_faces) < 2]
             edge,_ = self.rfcontext.nearest2D_edge(edges=selectable_edges, max_dist=10)
             if edge:
@@ -285,7 +285,6 @@ class Autofill(RFTool):
             sel_only = self.rfcontext.actions.pressed('select smart')
             self.rfcontext.actions.unpress()
 
-            self.rfcontext.undo_push('select smart')
             selectable_edges = [e for e in self.rfcontext.visible_edges() if len(e.link_faces) < 2]
             edge, _ = self.rfcontext.nearest2D_edge(edges=selectable_edges, max_dist=10)
             if edge:
@@ -303,24 +302,24 @@ class Autofill(RFTool):
             return 'move'
 
         if self.rfcontext.actions.pressed('increase count'):
-            self.rfcontext.undo_push('increase count')
-            self.change_subdivisions(True)
+            if self.change_subdivisions(True):
+                self.rfcontext.undo_push('increase count')
             return
 
         if self.rfcontext.actions.pressed('decrease count'):
-            self.rfcontext.undo_push('decrease count')
-            self.change_subdivisions(False)
+            if self.change_subdivisions(False):
+                self.rfcontext.undo_push('decrease count')
             return
 
         
         if self.rfcontext.actions.pressed('next'):
-            self.rfcontext.undo_push('next')
-            self.next_autofill()
+            if self.next_autofill():
+                self.rfcontext.undo_push('next')
             return
         
         if self.rfcontext.actions.pressed('previous'):
-            self.rfcontext.undo_push('previous')
-            self.prev_autofill()
+            if self.prev_autofill():
+                self.rfcontext.undo_push('previous')
             return
 
     @RFTool.dirty_when_done
@@ -338,19 +337,22 @@ class Autofill(RFTool):
     @RFTool.dirty_when_done
     def next_autofill(self):
         if self.patches.is_patch_selected():
-            self.patches.next()
+            return self.patches.next()
+        return False
 
     @RFTool.dirty_when_done
     def prev_autofill(self):
         if self.patches.is_patch_selected():
-            self.patches.prev()
+            return self.patches.prev()
+        return False
     
     @RFTool.dirty_when_done
     def change_subdivisions(self, add: bool):
         edges = self.rfcontext.get_selected_edges()
         sides = Side.multiple_from_edges(edges)
         if len(sides) == 1 or len(sides) == 2:
-            self.patches.change_subdivisions(sides, add=add)
+            return self.patches.change_subdivisions(sides, add=add)
+        return False
 
     @RFWidget.on_actioning('Autofill stroke')
     def stroking(self):
