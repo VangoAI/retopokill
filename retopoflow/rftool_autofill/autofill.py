@@ -58,7 +58,7 @@ class Autofill(RFTool):
     icon        = 'strokes-icon.png'
     help        = 'strokes.md'
     shortcut    = 'autofill tool'
-    statusbar   = '{{insert}} Insert edge strip and bridge\t{{increase count}} Increase segments\t{{decrease count}} Decrease segments'
+    statusbar   = '{{insert}} Insert patch side\t{{add}} Add patch side from selected  \t{{increase count}} Increase segments\t{{decrease count}} Decrease segments\t{{next}} Next autofill\t{{previous}} Previous autofill'
     # ui_config   = 'strokes_options.html'
 
     RFWidget_Default     = RFWidget_Default_Factory.create()
