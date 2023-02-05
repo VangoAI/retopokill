@@ -101,6 +101,11 @@ default_rf_keymaps = {
     'increase count': ['EQUAL','SHIFT+EQUAL','SHIFT+UP_ARROW', 'SHIFT+WHEELUPMOUSE'],
     'decrease count': ['MINUS','SHIFT+DOWN_ARROW','SHIFT+WHEELDOWNMOUSE'],
 
+    # autofill
+    'previous': ['LEFT_ARROW'],
+    'next': ['RIGHT_ARROW'],
+    'add': ['SHIFT+A'],
+
     # contours
     'rotate plane': ['R'],              # rotate loops about contour plane normal
     'rotate screen': ['R', 'SHIFT+R'],  # rotate loops in screen space.  note: R only works when rotating in plane
@@ -137,6 +142,7 @@ default_rf_keymaps = {
     'unpin all': ['SHIFT+ALT+P'],
 
     # shortcuts to tools
+    'autofill tool': ['CTRL+A'],
     'contours tool': ['ONE', 'CTRL+ALT+C'],
     'polystrips tool': ['TWO', 'CTRL+ALT+P'],
     'strokes tool': ['THREE', 'CTRL+ALT+B'],

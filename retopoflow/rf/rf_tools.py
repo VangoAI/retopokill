@@ -20,6 +20,7 @@ Created by Jonathan Denning, Jonathan Williamson, and Patrick Moore
 '''
 
 # the order of these tools dictates the order tools show in UI
+from ..rftool_autofill.autofill     import Autofill
 from ..rftool_contours.contours     import Contours
 from ..rftool_polystrips.polystrips import PolyStrips
 from ..rftool_strokes.strokes       import Strokes
@@ -33,11 +34,21 @@ from ..rftool_relax.relax           import Relax
 from ..rftool import RFTool
 
 from ...config.options import options
+from ..rftool_autofill.autofill_utils import AutofillPatches
 
 class RetopoFlow_Tools:
     def setup_rftools(self):
         self.rftool = None
         self.rftools = [rftool(self) for rftool in RFTool.registry]
+
+    def setup_patches(self):
+        for rftool in self.rftools:
+            if isinstance(rftool, Autofill):
+                filepath = options.get_patches_filepath()
+                try:
+                    rftool.patches = AutofillPatches.from_file(filepath, self)
+                except Exception as e:
+                    pass
 
     def select_rftool(self, rftool, quick=False):
         assert rftool in self.rftools
@@ -60,3 +71,7 @@ class RetopoFlow_Tools:
 
         if not quick: options['quickstart tool'] = rftool.name
 
+    def get_patches(self):
+        for rftool in self.rftools:
+            if isinstance(rftool, Autofill):
+                return rftool.patches

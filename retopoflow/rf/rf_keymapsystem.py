@@ -334,6 +334,9 @@ keymap_details = [
         ('delete', 'Show delete menu'),
         ('delete pie menu', 'Show delete pie menu'),
         ('smooth edge flow', 'Smooth edge flow of selected geometry'),
+        ('next', 'Autofill: get next autofill'),
+        ('previous', 'Autofill: get previous autofill'),
+        ('add', 'Autofill: add side from select edges'),
         ('rotate plane', 'Contours: rotate plane'),
         ('rotate screen', 'Contours: rotate screen'),
         ('slide', 'Loops: slide loop'),
@@ -361,6 +364,7 @@ keymap_details = [
         ('unpin all', 'Unpin all geometry'),
     ]),
     ('Switching Between Tools', [
+        ('autofill tool', 'Switch to Autofill'),
         ('contours tool', 'Switch to Contours'),
         ('polystrips tool', 'Switch to PolyStrips'),
         ('strokes tool', 'Switch to Strokes'),
