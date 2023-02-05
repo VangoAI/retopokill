@@ -283,7 +283,7 @@ class AutofillPatch:
         if self.i != -1:
             self.expanded_patterns[self.i].destroy(self.rfcontext)
 
-        r = requests.post("http://127.0.0.1:5000/get_expanded_patterns", json=to_json())
+        r = requests.post("http://35.90.250.174:5000/get_expanded_patterns", json=to_json())
         self.expanded_patterns = [ExpandedPattern(p['faces'], p['verts'], p['sides']) for p in r.json()]
         self.i = -1
         if self.expanded_patterns:
