@@ -402,7 +402,7 @@ if import_succeeded:
 
     class VIEW3D_PT_RetopoFlow(Panel):
         """RetopoFlow Blender Menu"""
-        bl_label = 'RetopoFlow'
+        bl_label = 'Retopokill'
         bl_space_type = 'VIEW_3D'
         bl_region_type = 'HEADER'
         # bl_ui_units_x = 100
