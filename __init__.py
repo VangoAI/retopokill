@@ -34,7 +34,7 @@ from bpy.app.handlers import persistent
 # a hack to check if we're under git version control
 # is_git = os.path.exists(os.path.join(os.path.dirname(__file__), '.git'))
 bl_info = {
-    "name":        "RetopoFlow",
+    "name":        "Retopokill",
     "description": "A suite of retopology tools for Blender through a unified retopology mode",
     "author":      "Jonathan Denning, Jonathan Lampel, Jonathan Williamson, Patrick Moore, Patrick Crawford, Christopher Gearhart",
     "location":    "View 3D > Header",
