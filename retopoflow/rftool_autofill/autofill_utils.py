@@ -307,8 +307,8 @@ class AutofillPatch:
 class AutofillPatches:
     def __init__(self, rfcontext):
         self.rfcontext = rfcontext
-        self.patches: list[AutofillPatch] = []
-        self.selected_patch_index = -1
+        self.last_patch = None
+        self.is_patch_selected = False
         self.current_sides: list[Side] = []
 
     def add_side(self, side):
@@ -324,8 +324,8 @@ class AutofillPatches:
                         break
             patch = AutofillPatch(self.current_sides, self.rfcontext)
             self.current_sides = []
-            self.patches.append(patch)
-            self.selected_patch_index = len(self.patches) - 1
+            self.last_patch = patch
+            self.is_patch_selected = True
 
     def change_subdivisions(self, sides: list[Side], add: bool) -> bool:
         '''
@@ -339,57 +339,48 @@ class AutofillPatches:
                 side.change_subdivisions(self.rfcontext, 1 if add else -1)
                 return True
 
-        for patch in self.patches:
-            if sides[0] in patch.sides:
-                if len(sides) == 1:
-                    num_to_add = 2 if add else -2
-                    patch.sides[patch.sides.index(sides[0])].change_subdivisions(self.rfcontext, num_to_add)
+        if sides[0] in self.last_patch.sides:
+            if len(sides) == 1:
+                num_to_add = 2 if add else -2
+                self.last_patch.sides[self.last_patch.sides.index(sides[0])].change_subdivisions(self.rfcontext, num_to_add)
+            else:
+                if sides[1] in self.last_patch.sides:
+                    self.last_patch.sides[self.last_patch.sides.index(sides[0])].change_subdivisions(self.rfcontext, 1 if add else -1)
+                    self.last_patch.sides[self.last_patch.sides.index(sides[1])].change_subdivisions(self.rfcontext, 1 if add else -1)
                 else:
-                    if sides[1] in patch.sides:
-                        patch.sides[patch.sides.index(sides[0])].change_subdivisions(self.rfcontext, 1 if add else -1)
-                        patch.sides[patch.sides.index(sides[1])].change_subdivisions(self.rfcontext, 1 if add else -1)
-                    else:
-                        break # sides are not part of same patch
-                patch.load()
-                return True
+                    return False # sides are not part of same patch
+            self.last_patch.load()
+            return True
         return False
 
     def select_patch_from_face(self, face):
         '''
-        select the patch containing the face
+        select the last patch if it contains the given face
         '''
-        for i, patch in enumerate(self.patches):
-            if patch.contains_face(face):
-                if self.selected_patch_index == i:
-                    self.deselect()
-                else:
-                    patch.select()
-                    self.selected_patch_index = i
-                return
-        self.deselect()
+        if self.is_patch_selected:
+            self.deselect()
+            self.is_patch_selected = False
+        elif self.last_patch.contains_face(face):
+            self.last_patch.select()
+            self.is_patch_selected = True
 
     def deselect(self):
         self.rfcontext.deselect_all()
-        self.selected_patch_index = -1
-
-    def is_patch_selected(self):
-        return self.selected_patch_index != -1
+        self.is_patch_selected = False
 
     def next(self) -> bool:
-        assert self.is_patch_selected()
-        return self.patches[self.selected_patch_index].next()
+        assert self.is_patch_selected
+        return self.last_patch.next()
 
     def prev(self) -> bool:
-        assert self.is_patch_selected()
-        return self.patches[self.selected_patch_index].prev()
+        assert self.is_patch_selected
+        return self.last_patch.prev()
 
     def save(self):
-        patches = []
-        for patch in self.patches:
-            try: # if the patch was externally modified (verts/edges/faces dissolved), get rid of it
-                patches.append(patch.save())
-            except Exception as e:
-                pass
+        try:
+            last_patch = self.last_patch.save()
+        except Exception as e:
+            last_patch = None
 
         current_sides = []
         for side in self.current_sides:
@@ -399,16 +390,16 @@ class AutofillPatches:
                 pass
 
         return {
-            'patches': patches,
+            'last_patch': last_patch,
             'current_sides': current_sides,
-            'selected_patch_index': self.selected_patch_index,
+            'is_patch_selected': self.is_patch_selected,
         }
 
     @staticmethod
     def from_saved(patches_saved: dict, rfcontext):
         patches = AutofillPatches(rfcontext)
-        patches.patches = [AutofillPatch.from_saved(patch, rfcontext) for patch in patches_saved['patches']]
-        patches.selected_patch_index = patches_saved['selected_patch_index']
+        patches.last_patch = AutofillPatch.from_saved(patches_saved['last_patch'], rfcontext) if patches_saved['last_patch'] else None
+        patches.is_patch_selected = patches_saved['is_patch_selected']
         patches.current_sides = [Side.from_saved(side, rfcontext) for side in patches_saved['current_sides']]
         return patches
 

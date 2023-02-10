@@ -336,13 +336,13 @@ class Autofill(RFTool):
 
     @RFTool.dirty_when_done
     def next_autofill(self):
-        if self.patches.is_patch_selected():
+        if self.patches.is_patch_selected:
             return self.patches.next()
         return False
 
     @RFTool.dirty_when_done
     def prev_autofill(self):
-        if self.patches.is_patch_selected():
+        if self.patches.is_patch_selected:
             return self.patches.prev()
         return False
     
