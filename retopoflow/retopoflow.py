@@ -28,6 +28,7 @@ import atexit
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 
+from .rf.rf_analytics     import RetopoFlow_Analytics
 from .rf.rf_blender       import RetopoFlow_Blender
 from .rf.rf_blendersave   import RetopoFlow_BlenderSave
 from .rf.rf_drawing       import RetopoFlow_Drawing
@@ -124,6 +125,7 @@ def preload_help_images(version='thread'):
 
 
 class RetopoFlow(
+    RetopoFlow_Analytics,
     RetopoFlow_Blender,
     RetopoFlow_BlenderSave,
     RetopoFlow_Drawing,

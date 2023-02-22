@@ -133,6 +133,8 @@ class Options:
         'github issues url':    'https://github.com/CGCookie/retopoflow/issues',
         'github new issue url': 'https://github.com/CGCookie/retopoflow/issues/new',
 
+        'backend url':          'http://127.0.0.1:5000',
+
         'screenshot filename':  'RetopoFlow_screenshot.png',
         'instrument_filename':  'RetopoFlow_instrument',
         'log_filename':         'RetopoFlow_log',
@@ -141,6 +143,7 @@ class Options:
         'profiler_filename':    'RetopoFlow_profiler.txt',
         'keymaps filename':     'RetopoFlow_keymaps.json',
         'patches_filename':     'RetopoFlow_patches.json',
+        'uuid_filename':        'RetopoFlow_uuid.txt',
         'blender state':        'RetopoFlow_BlenderState',    # name of text block that contains data about blender state
         'rotate object':        'RetopoFlow_Rotate',          # name of rotate object used for setting view
 
@@ -564,6 +567,12 @@ class Options:
 
     def get_patches_filepath(self):
         return os.path.abspath(bpy.data.filepath)[:-6] + "_" + options['patches_filename']
+
+    def get_uuid_filepath(self):
+        return './' + options['uuid_filename']
+
+    def get_endpoint(self, path):
+        return options['backend url'] + path
 
 class Themes:
     # fallback color for when specified key is not found

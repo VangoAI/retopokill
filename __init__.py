@@ -25,6 +25,7 @@ import time
 import textwrap
 import importlib
 from concurrent.futures import ThreadPoolExecutor
+import requests
 
 import bpy
 from bpy.types import Menu, Operator, Panel
@@ -753,6 +754,18 @@ def register():
     for cls in RF_classes: bpy.utils.register_class(cls)
     if import_succeeded: updater.register(bl_info)
     bpy.types.VIEW3D_MT_editor_menus.append(VIEW3D_PT_RetopoFlow.draw_popover)
+
+    # make sure there is a uuid file with the user's uuid
+    try:
+        with open(options['uuid_filename'], 'r') as f:
+            uuid = f.read()
+            if not uuid:
+                raise Exception("no uuid")
+    except Exception as e: # file doesn't exist or contains nothing
+        r = requests.get("http://127.0.0.1:5000/get_uuid")
+        uuid = r.content.decode("utf-8")
+        with open(options['uuid_filename'], 'w+') as f:
+            f.write(uuid)
 
 def unregister():
     if import_succeeded: retopoflow.preload_help_images.quit = True
