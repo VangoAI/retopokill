@@ -576,8 +576,7 @@ class Options:
     def make_post_request(self, path, args):
         e = options['backend url'] + path
         req_args = {"key": self.api_key, "args": args}
-        print(e, req_args)
-        return requests.post(e, req_args)
+        return requests.post(e, json=req_args)
 
 class Themes:
     # fallback color for when specified key is not found
@@ -797,6 +796,5 @@ class Visualization_Settings:
 
 # set all the default values!
 options = Options()
-options.set_api_key()
 themes = Themes()
 visualization = Visualization_Settings()
