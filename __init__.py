@@ -25,6 +25,7 @@ import time
 import textwrap
 import importlib
 from concurrent.futures import ThreadPoolExecutor
+import requests
 
 import bpy
 from bpy.types import Menu, Operator, Panel
@@ -34,7 +35,7 @@ from bpy.app.handlers import persistent
 # a hack to check if we're under git version control
 # is_git = os.path.exists(os.path.join(os.path.dirname(__file__), '.git'))
 bl_info = {
-    "name":        "RetopoFlow",
+    "name":        "Retopokill",
     "description": "A suite of retopology tools for Blender through a unified retopology mode",
     "author":      "Jonathan Denning, Jonathan Lampel, Jonathan Williamson, Patrick Moore, Patrick Crawford, Christopher Gearhart",
     "location":    "View 3D > Header",
@@ -402,7 +403,7 @@ if import_succeeded:
 
     class VIEW3D_PT_RetopoFlow(Panel):
         """RetopoFlow Blender Menu"""
-        bl_label = 'RetopoFlow'
+        bl_label = 'Retopokill'
         bl_space_type = 'VIEW_3D'
         bl_region_type = 'HEADER'
         # bl_ui_units_x = 100

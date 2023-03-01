@@ -26,6 +26,7 @@ import time
 import shelve
 import platform
 import tempfile
+import requests
 
 import bpy
 
@@ -133,6 +134,8 @@ class Options:
         'github issues url':    'https://github.com/CGCookie/retopoflow/issues',
         'github new issue url': 'https://github.com/CGCookie/retopoflow/issues/new',
 
+        'backend url':          'http://35.90.250.174:5000',
+
         'screenshot filename':  'RetopoFlow_screenshot.png',
         'instrument_filename':  'RetopoFlow_instrument',
         'log_filename':         'RetopoFlow_log',
@@ -141,6 +144,7 @@ class Options:
         'profiler_filename':    'RetopoFlow_profiler.txt',
         'keymaps filename':     'RetopoFlow_keymaps.json',
         'patches_filename':     'RetopoFlow_patches.json',
+        'api_key_filename':     'RetopoFlow_api_key.txt',
         'blender state':        'RetopoFlow_BlenderState',    # name of text block that contains data about blender state
         'rotate object':        'RetopoFlow_Rotate',          # name of rotate object used for setting view
 
@@ -564,6 +568,15 @@ class Options:
 
     def get_patches_filepath(self):
         return os.path.abspath(bpy.data.filepath)[:-6] + "_" + options['patches_filename']
+    
+    def set_api_key(self):
+        with open(options['api_key_filename'], 'r') as f:
+            self.api_key = f.read()
+
+    def make_post_request(self, path, args):
+        e = options['backend url'] + path
+        req_args = {"key": self.api_key, "args": args}
+        return requests.post(e, json=req_args)
 
 class Themes:
     # fallback color for when specified key is not found

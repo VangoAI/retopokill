@@ -28,6 +28,7 @@ import atexit
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 
+from .rf.rf_analytics     import RetopoFlow_Analytics
 from .rf.rf_blender       import RetopoFlow_Blender
 from .rf.rf_blendersave   import RetopoFlow_BlenderSave
 from .rf.rf_drawing       import RetopoFlow_Drawing
@@ -56,6 +57,7 @@ from ..addon_common.common.ui_core import preload_image, set_image_cache, UI_Ele
 from ..addon_common.common import ui_core
 from ..addon_common.common.useractions import ActionHandler
 from ..addon_common.cookiecutter.cookiecutter import CookieCutter
+from .rf.rf_analytics import Event
 
 from ..config.keymaps import get_keymaps
 from ..config.options import options
@@ -124,6 +126,7 @@ def preload_help_images(version='thread'):
 
 
 class RetopoFlow(
+    RetopoFlow_Analytics,
     RetopoFlow_Blender,
     RetopoFlow_BlenderSave,
     RetopoFlow_Drawing,
@@ -219,6 +222,28 @@ class RetopoFlow(
             self.fsm.force_set_state('main')
             self.document.body.delete_child(d['ui_window'])
             d['timer'].done()
+
+            def write_api_key_to_file(ui_event):
+                if ui_event.key == 'Enter':
+                    api_key = ui_event.target.value
+                    if api_key:
+                        with open(options['api_key_filename'], 'w+') as f:
+                            f.write(api_key)
+                        self.document.body.delete_child(win)
+                        options.set_api_key()
+                        try:
+                            self.log_event(Event.START)
+                        except Exception as e:
+                            os.remove(options['api_key_filename'])
+                            raise e
+
+            if not os.path.exists(options['api_key_filename']):
+                win = UI_Element.fromHTMLFile(abspath('rf/api_key_dialog.html'))[0]
+                self.document.body.append_child(win)
+                self.document.body.getElementById('apikey').add_eventListener('on_keypress', write_api_key_to_file)
+            else:
+                options.set_api_key()
+                self.log_event(Event.START)
         d['working'] = False
 
     def preload_help_pause(self):
@@ -264,6 +289,7 @@ class RetopoFlow(
 
 
     def end(self):
+        self.log_event(Event.END)
         options.clear_callbacks()
         self.blender_ui_reset()
         self.undo_clear(touch=False)
