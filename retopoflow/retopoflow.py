@@ -221,6 +221,19 @@ class RetopoFlow(
             self.fsm.force_set_state('main')
             self.document.body.delete_child(d['ui_window'])
             d['timer'].done()
+
+            def write_api_key_to_file(ui_event):
+                if ui_event.key == 'Enter':
+                    api_key = ui_event.target.value
+                    if api_key:
+                        with open(options['api_key_filename'], 'w+') as f:
+                            f.write(api_key)
+                        self.document.body.delete_child(win)
+            
+            if not os.path.exists(options['api_key_filename']):
+                win = UI_Element.fromHTMLFile(abspath('rf/api_key_dialog.html'))[0]
+                self.document.body.append_child(win)
+                self.document.body.getElementById('apikey').add_eventListener('on_keypress', write_api_key_to_file)
         d['working'] = False
 
     def preload_help_pause(self):

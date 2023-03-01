@@ -4,12 +4,10 @@ from ...config.options import options
 
 class RetopoFlow_Analytics:
     def __init__(self):
-        with open(options['uuid_filename'], 'r') as f:
-            self.uuid = f.read()
         self.log_event(Event.START)
 
     def log_event(self, event):
-        res = requests.post(options.get_endpoint('/log_event'), json={'uuid': self.uuid, 'event': event.to_string()})
+        res = options.make_post_request('/log_event', args = event.to_string())
         if not res.json()['success']:
             print("log failed")
 

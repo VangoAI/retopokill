@@ -26,6 +26,7 @@ import time
 import shelve
 import platform
 import tempfile
+import requests
 
 import bpy
 
@@ -143,7 +144,7 @@ class Options:
         'profiler_filename':    'RetopoFlow_profiler.txt',
         'keymaps filename':     'RetopoFlow_keymaps.json',
         'patches_filename':     'RetopoFlow_patches.json',
-        'uuid_filename':        'RetopoFlow_uuid.txt',
+        'api_key_filename':     'RetopoFlow_api_key.txt',
         'blender state':        'RetopoFlow_BlenderState',    # name of text block that contains data about blender state
         'rotate object':        'RetopoFlow_Rotate',          # name of rotate object used for setting view
 
@@ -567,12 +568,16 @@ class Options:
 
     def get_patches_filepath(self):
         return os.path.abspath(bpy.data.filepath)[:-6] + "_" + options['patches_filename']
+    
+    def set_api_key(self):
+        with open(options['api_key_filename'], 'r') as f:
+            self.api_key = f.read()
 
-    def get_uuid_filepath(self):
-        return './' + options['uuid_filename']
-
-    def get_endpoint(self, path):
-        return options['backend url'] + path
+    def make_post_request(self, path, args):
+        e = options['backend url'] + path
+        req_args = {"key": self.api_key, "args": args}
+        print(e, req_args)
+        return requests.post(e, req_args)
 
 class Themes:
     # fallback color for when specified key is not found
@@ -792,5 +797,6 @@ class Visualization_Settings:
 
 # set all the default values!
 options = Options()
+options.set_api_key()
 themes = Themes()
 visualization = Visualization_Settings()
