@@ -41,15 +41,6 @@ class RetopoFlow_Tools:
         self.rftool = None
         self.rftools = [rftool(self) for rftool in RFTool.registry]
 
-    def setup_patches(self):
-        for rftool in self.rftools:
-            if isinstance(rftool, Autofill):
-                filepath = options.get_patches_filepath()
-                try:
-                    rftool.patches = AutofillPatches.from_file(filepath, self)
-                except Exception as e:
-                    pass
-
     def select_rftool(self, rftool, quick=False):
         assert rftool in self.rftools
         if rftool == self.rftool: return

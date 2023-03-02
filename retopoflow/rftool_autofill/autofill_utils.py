@@ -361,7 +361,7 @@ class AutofillPatches:
         if self.is_patch_selected:
             self.deselect()
             self.is_patch_selected = False
-        elif self.last_patch.contains_face(face):
+        elif self.last_patch and self.last_patch.contains_face(face):
             self.last_patch.select()
             self.is_patch_selected = True
 
@@ -404,17 +404,3 @@ class AutofillPatches:
         patches.current_sides = [Side.from_saved(side, rfcontext) for side in patches_saved['current_sides']]
         return patches
 
-    def to_file(self, path):
-        saved = self.save()
-        saved['current_sides'] = [] # don't save the current sides
-        with open(path, 'w+') as outfile:
-            json.dump(saved, outfile)
-
-    @staticmethod
-    def from_file(path, rfcontext):
-        '''
-        will error if the file does not exist
-        '''
-        with open(path, 'r') as infile:
-            saved = json.load(infile)
-            return AutofillPatches.from_saved(saved, rfcontext)
