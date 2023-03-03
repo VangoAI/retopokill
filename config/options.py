@@ -134,6 +134,8 @@ class Options:
         'github issues url':    'https://github.com/CGCookie/retopoflow/issues',
         'github new issue url': 'https://github.com/CGCookie/retopoflow/issues/new',
 
+        'backend url':          'http://35.90.250.174:5000',
+
         'screenshot filename':  'RetopoFlow_screenshot.png',
         'instrument_filename':  'RetopoFlow_instrument',
         'log_filename':         'RetopoFlow_log',
@@ -562,7 +564,7 @@ class Options:
 
         base, ext = os.path.splitext(filename)
         return os.path.join(path, f'{base}{suffix}{ext}')
-    
+
     def get_api_key_filepath(self):
         user_dir = bpy.utils.user_resource('CONFIG')
         file_path = os.path.join(user_dir, options['api_key_filename'])
