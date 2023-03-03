@@ -1,12 +1,12 @@
-import requests
 from enum import Enum
-from ...config.options import options
+from .rf_api import RetopoFlow_API
 
 class RetopoFlow_Analytics:
-    def log_event(self, event):
-        res = options.make_post_request('/log_event', args = event.to_string())
+    def log_event(self, event: 'Event'):
+        res = RetopoFlow_API.post('/log_event', event.to_string())
         if not res.json()['success']:
             print("log failed")
+            raise Exception(res.json()['error'])
 
 class Event(Enum):
     START = 1

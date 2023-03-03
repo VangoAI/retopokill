@@ -23,9 +23,8 @@ from ...addon_common.common.maths  import Point
 from ...addon_common.common.utils  import iter_pairs
 from ..rftool_strokes.strokes_utils import restroke
 from ...config.options import options
-import requests
+from ..rf.rf_api import RetopoFlow_API
 import copy
-import json
 
 class ExpandedPattern:
     def __init__(self, faces: list[list[int, int, int, int]], verts: list[tuple[float, float, float]], sides: list[list[int]]):
@@ -284,7 +283,7 @@ class AutofillPatch:
         if self.i != -1:
             self.expanded_patterns[self.i].destroy(self.rfcontext)
 
-        r = options.make_post_request('/get_expanded_patterns', to_json())
+        r = RetopoFlow_API.post('/get_expanded_patterns', to_json())
         self.expanded_patterns = [ExpandedPattern(p['faces'], p['verts'], p['sides']) for p in r.json()]
         self.i = -1
         if self.expanded_patterns:

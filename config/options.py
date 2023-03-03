@@ -134,8 +134,6 @@ class Options:
         'github issues url':    'https://github.com/CGCookie/retopoflow/issues',
         'github new issue url': 'https://github.com/CGCookie/retopoflow/issues/new',
 
-        'backend url':          'http://35.90.250.174:5000',
-
         'screenshot filename':  'RetopoFlow_screenshot.png',
         'instrument_filename':  'RetopoFlow_instrument',
         'log_filename':         'RetopoFlow_log',
@@ -569,15 +567,6 @@ class Options:
         user_dir = bpy.utils.user_resource('CONFIG')
         file_path = os.path.join(user_dir, options['api_key_filename'])
         return file_path
-    
-    def set_api_key(self):
-        with open(self.get_api_key_filepath(), 'r') as f:
-            self.api_key = f.read()
-
-    def make_post_request(self, path, args):
-        e = options['backend url'] + path
-        req_args = {"key": self.api_key, "args": args}
-        return requests.post(e, json=req_args)
 
 class Themes:
     # fallback color for when specified key is not found
