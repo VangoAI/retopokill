@@ -143,7 +143,6 @@ class Options:
         'quickstart_filename':  'RetopoFlow_quickstart',
         'profiler_filename':    'RetopoFlow_profiler.txt',
         'keymaps filename':     'RetopoFlow_keymaps.json',
-        'patches_filename':     'RetopoFlow_patches.json',
         'api_key_filename':     'RetopoFlow_api_key.txt',
         'blender state':        'RetopoFlow_BlenderState',    # name of text block that contains data about blender state
         'rotate object':        'RetopoFlow_Rotate',          # name of rotate object used for setting view
@@ -565,12 +564,14 @@ class Options:
 
         base, ext = os.path.splitext(filename)
         return os.path.join(path, f'{base}{suffix}{ext}')
-
-    def get_patches_filepath(self):
-        return os.path.abspath(bpy.data.filepath)[:-6] + "_" + options['patches_filename']
+    
+    def get_api_key_filepath(self):
+        user_dir = bpy.utils.user_resource('CONFIG')
+        file_path = os.path.join(user_dir, options['api_key_filename'])
+        return file_path
     
     def set_api_key(self):
-        with open(options['api_key_filename'], 'r') as f:
+        with open(self.get_api_key_filepath(), 'r') as f:
             self.api_key = f.read()
 
     def make_post_request(self, path, args):

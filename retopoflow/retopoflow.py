@@ -226,17 +226,17 @@ class RetopoFlow(
                 if ui_event.key == 'Enter':
                     api_key = ui_event.target.value
                     if api_key:
-                        with open(options['api_key_filename'], 'w+') as f:
+                        with open(options.get_api_key_filepath(), 'w+') as f:
                             f.write(api_key)
                         self.document.body.delete_child(win)
                         options.set_api_key()
                         try:
                             self.log_event(Event.START)
                         except Exception as e:
-                            os.remove(options['api_key_filename'])
+                            os.remove(options.get_api_key_filepath())
                             raise e
 
-            if not os.path.exists(options['api_key_filename']):
+            if not os.path.exists(options.get_api_key_filepath()):
                 win = UI_Element.fromHTMLFile(abspath('rf/api_key_dialog.html'))[0]
                 self.document.body.append_child(win)
                 self.document.body.getElementById('apikey').add_eventListener('on_keypress', write_api_key_to_file)
