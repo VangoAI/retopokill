@@ -268,15 +268,15 @@ class Autofill(RFTool):
             sel_only = self.actions.pressed('select single')
 
             selectable_edges = [e for e in self.rfcontext.visible_edges() if len(e.link_faces) < 2]
-            edge,_ = self.rfcontext.nearest2D_edge(edges=selectable_edges, max_dist=10)
+            edge, _ = self.rfcontext.nearest2D_edge(edges=selectable_edges, max_dist=10)
             if edge:
                 if sel_only:
                     self.patches.deselect()
                 self.rfcontext.select(edge, supparts=False, only=sel_only)
                 return
-            face = self.rfcontext.accel_nearest2D_face(max_dist=options['select dist'])
+            face, _ = self.rfcontext.accel_nearest2D_face(max_dist=options['select dist'])
             if face:
-                self.patches.select_patch_from_face(face[0])
+                self.patches.select_patch_from_face(face)
                 return
             self.patches.deselect()
             return
