@@ -28,8 +28,6 @@ import atexit
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 
-from .rf.rf_analytics     import RetopoFlow_Analytics
-from .rf.rf_api           import RetopoFlow_API
 from .rf.rf_blender       import RetopoFlow_Blender
 from .rf.rf_blendersave   import RetopoFlow_BlenderSave
 from .rf.rf_drawing       import RetopoFlow_Drawing
@@ -58,7 +56,6 @@ from ..addon_common.common.ui_core import preload_image, set_image_cache, UI_Ele
 from ..addon_common.common import ui_core
 from ..addon_common.common.useractions import ActionHandler
 from ..addon_common.cookiecutter.cookiecutter import CookieCutter
-from .rf.rf_analytics import Event
 
 from ..config.keymaps import get_keymaps
 from ..config.options import options
@@ -127,7 +124,6 @@ def preload_help_images(version='thread'):
 
 
 class RetopoFlow(
-    RetopoFlow_Analytics,
     RetopoFlow_Blender,
     RetopoFlow_BlenderSave,
     RetopoFlow_Drawing,
@@ -223,33 +219,6 @@ class RetopoFlow(
             self.document.body.delete_child(d['ui_window'])
             d['timer'].done()
 
-            def on_keypress(ui_event):
-                if ui_event.key == 'Enter':
-                    api_key = ui_event.target.value
-                    if api_key:
-                        with open(options.get_api_key_filepath(), 'w+') as f:
-                            f.write(api_key)
-                        self.document.body.delete_child(win)
-                        RetopoFlow_API.set_api_key(api_key)
-                        try:
-                            self.log_event(Event.START)
-                        except Exception as e:
-                            os.remove(options.get_api_key_filepath())
-                            raise e
-
-            if not os.path.exists(options.get_api_key_filepath()):
-                win = UI_Element.fromHTMLFile(abspath('rf/api_key_dialog.html'))[0]
-                self.document.body.append_child(win)
-                self.document.body.getElementById('apikey').add_eventListener('on_keypress', on_keypress)
-            else:
-                with open(options.get_api_key_filepath(), 'r') as f:
-                    api_key = f.read()
-                    RetopoFlow_API.set_api_key(api_key)
-                    try:
-                        self.log_event(Event.START)
-                    except Exception as e:
-                        os.remove(options.get_api_key_filepath())
-                        raise e
         d['working'] = False
 
     def preload_help_pause(self):
@@ -295,7 +264,6 @@ class RetopoFlow(
 
 
     def end(self):
-        self.log_event(Event.END)
         options.clear_callbacks()
         self.blender_ui_reset()
         self.undo_clear(touch=False)
